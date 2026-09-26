@@ -15,9 +15,9 @@ private struct ContentView: View {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 42))
                 .foregroundStyle(.indigo)
-            Text("Hangout AI")
+            Text("HUDDLE")
                 .font(.largeTitle.bold())
-            Text("Plan your next group hangout right inside Messages. Open a conversation, tap +, then choose Hangout AI.")
+            Text("HUDDLE helps your group plan a hangout in Messages. Open a conversation, tap +, then choose HUDDLE.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }

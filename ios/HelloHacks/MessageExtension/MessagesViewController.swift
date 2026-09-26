@@ -27,21 +27,36 @@ final class MessagesViewController: MSMessagesAppViewController {
             guard let conversation = self?.activeConversation else { return }
             let message = MSMessage()
             let layout = MSMessageTemplateLayout()
-            layout.caption = "Hangout AI · \(plan.title)"
+            layout.caption = "HUDDLE · \(plan.title)"
             layout.subcaption = "\(plan.when) · about $\(plan.price) per person · Share with your group"
-            var components = URLComponents()
-            components.scheme = "hellohacks"
-            components.host = "plan"
-            components.queryItems = [
-                URLQueryItem(name: "title", value: plan.title),
-                URLQueryItem(name: "when", value: plan.when),
-                URLQueryItem(name: "price", value: String(plan.price))
-            ]
-            message.url = components.url
-            message.layout = layout
-            conversation.insert(message) { error in
-                if let error { print("Could not share hangout plan: \(error)") }
+            guard let configuredBaseURL = Bundle.main.object(forInfoDictionaryKey: "HUDDLE_API_BASE_URL") as? String,
+                  let endpoint = URL(string: configuredBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/sessions/invite") else {
+                print("Set HUDDLE_API_BASE_URL in the Messages extension Info.plist to your deployed HUDDLE API.")
+                return
             }
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            URLSession.shared.dataTask(with: request) { data, _, error in
+                guard error == nil, let data,
+                      let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let invite = result["inviteUrl"] as? String,
+                      var components = URLComponents(string: invite) else {
+                    print("Could not create a HUDDLE invite: \(error?.localizedDescription ?? "invalid API response")")
+                    return
+                }
+                components.queryItems = (components.queryItems ?? []) + [
+                    URLQueryItem(name: "plan", value: plan.title),
+                    URLQueryItem(name: "when", value: plan.when),
+                    URLQueryItem(name: "budget", value: String(plan.price))
+                ]
+                message.url = components.url
+                DispatchQueue.main.async {
+                    conversation.insert(message) { error in
+                        if let error { print("Could not share HUDDLE invite: \(error)") }
+                    }
+                }
+            }.resume()
         }
 
         let controller = UIHostingController(rootView: planner)
@@ -109,7 +124,7 @@ private struct HangoutPlannerView: View {
                 .foregroundStyle(purple)
                 .frame(width: 38, height: 38)
                 .background(purple.opacity(0.16), in: Circle())
-            Text("Hangout AI").font(.headline.bold())
+            Text("HUDDLE").font(.headline.bold())
             Spacer()
             Text("GROUP PLANNER")
                 .font(.system(size: 9, weight: .bold))
@@ -127,7 +142,7 @@ private struct HangoutPlannerView: View {
                     .padding(.top, 6)
                 Text("Plan this hangout")
                     .font(.system(size: 25, weight: .bold, design: .rounded))
-                Text("Find something fun that works for everyone in the chat.")
+                Text("Start a group plan. Everyone adds their own preferences and availability.")
                     .font(.system(size: 14))
                     .foregroundStyle(.white.opacity(0.66))
                     .multilineTextAlignment(.center)
@@ -139,7 +154,7 @@ private struct HangoutPlannerView: View {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { showingSuggestions = true }
             } label: {
-                Label("Find a plan", systemImage: "sparkles")
+                Label("Create group invite", systemImage: "sparkles")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 15)
@@ -149,7 +164,7 @@ private struct HangoutPlannerView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("STARTING WITH THESE IDEAS")
+                Text("EXAMPLE PREFERENCES")
                     .font(.system(size: 10, weight: .bold))
                     .tracking(1.1)
                     .foregroundStyle(.white.opacity(0.48))
@@ -159,7 +174,7 @@ private struct HangoutPlannerView: View {
                     preferenceTile(icon: "fork.knife", title: "Interests", value: "Food · Games")
                 }
             }
-            Text("Example preferences · Connect Google Calendar in setup to personalize availability.")
+            Text("Sample ideas only. Share the invite so everyone can add preferences in HUDDLE.")
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.4))
                 .lineSpacing(3)
@@ -178,8 +193,8 @@ private struct HangoutPlannerView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Your plan").font(.system(size: 25, weight: .bold, design: .rounded))
-                Text("3 ideas · pick one for the group to vote on")
+                Text("Example plans").font(.system(size: 25, weight: .bold, design: .rounded))
+                Text("Sample ideas · open the shared link to personalize")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.58))
             }
@@ -191,7 +206,7 @@ private struct HangoutPlannerView: View {
             Button {
                 onVote(HangoutPlan.suggestions[selectedPlan])
             } label: {
-                Text("Share with the group")
+                Text("Create invite and share")
                     .font(.system(size: 15, weight: .bold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -199,7 +214,7 @@ private struct HangoutPlannerView: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
-            Text("Send an idea to the chat so everyone can weigh in.")
+            Text("Everyone can add preferences and vote from the shared HUDDLE link.")
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.42))
                 .frame(maxWidth: .infinity)

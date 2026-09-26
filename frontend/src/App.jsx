@@ -1,307 +1,231 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
-const activityOptions = [
-  { id: 'outdoors', label: 'Outdoors', emoji: '🌿' },
-  { id: 'food', label: 'Food', emoji: '🍜' },
-  { id: 'games', label: 'Games', emoji: '🎳' },
-  { id: 'music', label: 'Music', emoji: '🎵' },
-  { id: 'relax', label: 'Low-key', emoji: '☕' },
-]
+const activities = ['Food & drinks', 'Games', 'Outdoors', 'Movies', 'Live music', 'Coffee']
 const timeOptions = [
-  { id: 'sat-evening', label: 'Saturday evening' },
-  { id: 'sun-morning', label: 'Sunday morning' },
-  { id: 'sun-afternoon', label: 'Sunday afternoon' },
+  ['saturday-afternoon', 'Saturday afternoon'],
+  ['saturday-evening', 'Saturday evening'],
+  ['sunday-afternoon', 'Sunday afternoon'],
+  ['sunday-evening', 'Sunday evening'],
+  ['friday-evening', 'Friday evening'],
 ]
-
-function upcomingTimeSlots() {
-  const now = new Date()
-  return [
-    { id: 'sat-evening', day: 6, start: [17, 0], end: [22, 0] },
-    { id: 'sun-morning', day: 0, start: [10, 0], end: [14, 0] },
-    { id: 'sun-afternoon', day: 0, start: [14, 0], end: [18, 0] },
-  ].map((slot) => {
-    const start = new Date(now)
-    const daysAhead = (slot.day - now.getDay() + 7) % 7 || 7
-    start.setDate(now.getDate() + daysAhead)
-    start.setHours(...slot.start, 0, 0)
-    const end = new Date(start)
-    end.setHours(...slot.end, 0, 0)
-    return { id: slot.id, start: start.toISOString(), end: end.toISOString() }
-  })
-}
-
 async function api(path, options = {}) {
-  let response
-  try {
-    response = await fetch(`/api${path}`, {
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...options.headers },
-      ...options,
-    })
-  } catch {
-    throw new Error('Cannot reach the HUDDLE backend. Start it in a terminal with `cd backend && npm run dev`, then reload this page.')
-  }
-
-  const contentType = response.headers.get('content-type') || ''
-  let body = {}
-  if (contentType.includes('application/json')) {
-    try { body = await response.json() } catch {
-      throw new Error(`The backend returned invalid JSON (HTTP ${response.status}). Restart it and check the backend terminal for errors.`)
-    }
-  } else {
-    const message = (await response.text()).trim().slice(0, 180)
-    if (!response.ok) {
-      throw new Error(`Backend request failed (HTTP ${response.status}). ${message || 'Check that the backend is running on port 8787.'}`)
-    }
-    throw new Error('The backend returned a non-JSON response. Check that the Vite API proxy is configured and restart the frontend.')
-  }
-  if (!response.ok) throw new Error(body.error || 'Something went wrong.')
-  return body
+  const response = await fetch(path, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } })
+  const result = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.')
+  return result
 }
-
 function App() {
-  const inviteCode = new URLSearchParams(window.location.search).get('session')?.toUpperCase() || ''
   const [step, setStep] = useState('welcome')
-  const [code, setCode] = useState(inviteCode)
-  const [name, setName] = useState('')
-  const [budget, setBudget] = useState(35)
-  const [interests, setInterests] = useState(['outdoors', 'food'])
-  const [needs, setNeeds] = useState('')
-  const [travelMiles, setTravelMiles] = useState(5)
-  const [availability, setAvailability] = useState(['sat-evening', 'sun-morning'])
-  const [calendarDemo, setCalendarDemo] = useState(false)
-  const [googleUser, setGoogleUser] = useState(null)
-  const [googleReady, setGoogleReady] = useState(false)
-  const [openAIReady, setOpenAIReady] = useState(false)
-  const [checkingCalendar, setCheckingCalendar] = useState(false)
-  const [ideas, setIdeas] = useState('')
+  const [user, setUser] = useState(null)
   const [session, setSession] = useState(null)
-  const [selectedPlan, setSelectedPlan] = useState('')
-  const [error, setError] = useState('')
+  const [sessionId, setSessionId] = useState('')
+  const [inviteUrl, setInviteUrl] = useState('')
+  const [budget, setBudget] = useState(35)
+  const [selectedActivities, setSelectedActivities] = useState(['Food & drinks', 'Outdoors'])
+  const [manualAvailability, setManualAvailability] = useState([])
+  const [needs, setNeeds] = useState('')
+  const [location, setLocation] = useState('near campus')
+  const [selectedPlanId, setSelectedPlanId] = useState(null)
   const [loading, setLoading] = useState(false)
-  const plans = session?.suggestions || []
-  const selected = useMemo(() => plans.find((plan) => plan.id === selectedPlan) || plans[0], [plans, selectedPlan])
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [planMode, setPlanMode] = useState('')
 
   useEffect(() => {
-    if (!inviteCode) return
-    setLoading(true)
-    api(`/sessions/${inviteCode}`)
-      .then((result) => { setSession(result); setStep('preferences') })
-      .catch(() => api('/sessions', { method: 'POST', body: JSON.stringify({ code: inviteCode }) })
-        .then((result) => { setSession(result); setError('You’re first! Add your preferences to start the session.'); setStep('preferences') })
-        .catch((requestError) => setError(requestError.message)))
-      .finally(() => setLoading(false))
-  }, [inviteCode])
-
-  useEffect(() => {
-    Promise.all([api('/auth/me'), api('/health')]).then(([auth, health]) => {
-      if (auth.connected) { setGoogleUser(auth); setName(auth.name || '') }
-      setGoogleReady(health.googleConfigured)
-      setOpenAIReady(health.openAIConfigured)
-    }).catch(() => {})
+    let cancelled = false
+    async function restore() {
+      try {
+        const { user: signedInUser } = await api('/api/me')
+        if (cancelled || !signedInUser) return
+        setUser(signedInUser)
+        const querySession = new URLSearchParams(window.location.search).get('session')
+        const pendingSession = querySession || localStorage.getItem('huddle_pending_session')
+        if (pendingSession) {
+          setSessionId(pendingSession)
+          const joined = await api('/api/sessions/' + encodeURIComponent(pendingSession) + '/join', { method: 'POST', body: '{}' })
+          if (cancelled) return
+          setSession(joined.session)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('session')
+          history.replaceState({}, '', url.pathname + url.search)
+          localStorage.removeItem('huddle_pending_session')
+          setStep('preferences')
+        } else setStep('home')
+      } catch (err) { if (!cancelled) setError(err.message) }
+    }
+    restore()
+    return () => { cancelled = true }
   }, [])
 
-  async function startSession(event) {
-    event?.preventDefault()
-    setLoading(true); setError('')
+  const responseCount = session?.participants.filter((person) => person.preferences).length || 0
+  const plans = session?.plans || []
+  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || plans[0]
+  function signIn() {
+    const querySession = new URLSearchParams(window.location.search).get('session')
+    const sessionToRestore = querySession || sessionId
+    if (sessionToRestore) localStorage.setItem('huddle_pending_session', sessionToRestore)
+    window.location.assign('/auth/google')
+  }
+  async function beginDemo() {
+    setError(''); setLoading(true)
     try {
-      const created = await api('/sessions', { method: 'POST', body: JSON.stringify({}) })
-      setCode(created.code); setSession(created); setStep('preferences')
-      window.history.replaceState({}, '', `?session=${created.code}`)
-    } catch (requestError) { setError(requestError.message) }
+      const result = await api('/api/demo/session', { method: 'POST', body: '{}' })
+      setUser(result.user); setSessionId(result.sessionId)
+      setInviteUrl(window.location.origin + '/?session=' + encodeURIComponent(result.sessionId))
+      const loaded = await api('/api/sessions/' + result.sessionId + '/join', { method: 'POST', body: '{}' })
+      setSession(loaded.session); setStep('preferences')
+    } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
-
-  async function openInvite(event) {
-    event.preventDefault(); setError(''); setLoading(true)
+  async function createSession() {
+    setError(''); setLoading(true)
     try {
-      const normalized = code.trim().toUpperCase()
-      if (!normalized) throw new Error('Enter the Huddle code from your group chat.')
-      const result = await api(`/sessions/${normalized}`)
-      setCode(normalized); setSession(result); setStep('preferences')
-      window.history.replaceState({}, '', `?session=${normalized}`)
-    } catch (requestError) { setError(requestError.message) }
+      const result = await api('/api/sessions', { method: 'POST', body: '{}' })
+      setSessionId(result.sessionId); setInviteUrl(result.inviteUrl)
+      const loaded = await api('/api/sessions/' + result.sessionId + '/join', { method: 'POST', body: '{}' })
+      setSession(loaded.session); setStep('preferences')
+    } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
-
-  function toggle(setter, current, value) {
-    setter(current.includes(value) ? current.filter((item) => item !== value) : [...current, value])
+  function toggleActivity(activity) {
+    setSelectedActivities((current) => current.includes(activity) ? current.filter((item) => item !== activity) : [...current, activity])
   }
-
-  function connectCalendarDemo() {
-    const next = !calendarDemo
-    setCalendarDemo(next)
-    setAvailability(next ? ['sat-evening', 'sun-morning'] : [])
+  function toggleTime(value) {
+    setManualAvailability((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])
   }
-
-  function beginGoogleAuth() {
-    const returnPath = `${window.location.pathname}${window.location.search}`
-    window.location.href = `/auth/google?return=${encodeURIComponent(returnPath)}`
-  }
-
-  async function checkGoogleCalendar() {
-    if (!googleUser) return beginGoogleAuth()
-    setCheckingCalendar(true); setError('')
+  async function savePreferences() {
+    setError(''); setLoading(true)
     try {
-      const result = await api('/calendar/freebusy', { method: 'POST', body: JSON.stringify({ slots: upcomingTimeSlots() }) })
-      const freeSlots = result.available.filter((slot) => slot.available).map((slot) => slot.id)
-      setAvailability(freeSlots); setCalendarDemo(false)
-      setError(freeSlots.length ? 'Google Calendar checked. Only busy/free status was used.' : 'No free sample times found this weekend. Choose another time or adjust your availability.')
-    } catch (requestError) { setError(requestError.message) }
-    finally { setCheckingCalendar(false) }
-  }
-
-  async function signOutGoogle() {
-    await fetch('/auth/logout', { method: 'POST' })
-    setGoogleUser(null)
-  }
-
-  async function submitPreferences(event) {
-    event.preventDefault(); setError(''); setLoading(true)
-    try {
-      const participantIdKey = `huddle-participant-${code}`
-      const participantId = localStorage.getItem(participantIdKey) || crypto.randomUUID()
-      localStorage.setItem(participantIdKey, participantId)
-      await api(`/sessions/${code}/responses`, {
-        method: 'POST',
-        body: JSON.stringify({ participantId, name, budget, interests, needs, ideas, travelMiles, availability, calendarDemo, googleConnected: Boolean(googleUser) }),
-      })
-      const result = await api(`/sessions/${code}/ideas`, { method: 'POST', body: JSON.stringify({}) })
-      setSession(result); setSelectedPlan(result.suggestions?.[0]?.id || ''); setStep('results')
-      if (result.warning) setError(result.warning)
-      else if (result.source === 'sample') setError('OpenAI is not configured, so sample ideas are shown.')
-    } catch (requestError) { setError(requestError.message) }
+      const result = await api('/api/sessions/' + sessionId + '/preferences', { method: 'PUT', body: JSON.stringify({ interests: selectedActivities, budget, needs, location, manualAvailability }) })
+      setSession(result.session); setNotice('Your preferences are saved for this group.'); setStep('ideas')
+    } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
-
-  async function copyInvite() {
-    const url = new URL(window.location.href)
-    url.searchParams.set('session', code)
-    await navigator.clipboard?.writeText(url.toString())
-    setError('Invite link copied. Paste it into your group chat.')
+  async function refreshSession() {
+    const result = await api('/api/sessions/' + sessionId)
+    setSession(result.session)
   }
-
-  async function refreshGroup() {
+  async function findPlans() {
+    setError(''); setLoading(true)
     try {
-      const result = await api(`/sessions/${code}/ideas`, { method: 'POST', body: JSON.stringify({}) })
-      setSession(result)
-      setSelectedPlan((current) => result.suggestions?.some((plan) => plan.id === current) ? current : result.suggestions?.[0]?.id || '')
-      setError(result.source === 'sample' ? 'Group responses updated. OpenAI is not configured, so sample ideas are shown.' : 'Group responses updated and plans regenerated.')
-    } catch (requestError) { setError(requestError.message) }
+      const result = await api('/api/sessions/' + sessionId + '/plans', { method: 'POST', body: '{}' })
+      setPlanMode(result.planMode); await refreshSession(); setSelectedPlanId(0)
+      setNotice(result.availableTimeFound ? 'Plans use your group’s shared availability.' : 'No shared slot matched; showing the nearest suggested window.')
+      if (result.calendarWarnings?.length) setNotice('Some calendars could not be checked. Add manual availability or reconnect Google Calendar.')
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
   }
-
-  async function shareItinerary() {
-    if (!selected) return
-    const text = `HUDDLE idea: ${selected.title} · about $${selected.cost} per person · within ${selected.miles} mi. ${selected.description}`
+  async function vote(planId) {
+    setError(''); setSelectedPlanId(planId)
     try {
-      if (navigator.share) await navigator.share({ title: 'Our HUDDLE plan', text })
-      else { await navigator.clipboard?.writeText(text); setError('Itinerary copied. Paste it into your group chat.') }
-    } catch (shareError) {
-      if (shareError.name !== 'AbortError') setError('Could not open the share sheet. Copy the plan details from this page.')
-    }
+      const result = await api('/api/sessions/' + sessionId + '/vote', { method: 'POST', body: JSON.stringify({ planId }) })
+      setSession(result.session); setNotice('Your vote is saved.')
+    } catch (err) { setError(err.message) }
   }
-
-  function renderWelcome() {
-    return <div className="view-card welcome">
-      <div className="sparkle-orbit"><span>✦</span><i>✦</i><b>✦</b></div>
-      <p className="eyebrow">GOOD PLANS, MADE TOGETHER</p>
-      <h1>Make your group chat<br /><em>go somewhere.</em></h1>
-      <p className="subhead">HUDDLE turns everyone’s availability, budget, and interests into a plan the group can agree on.</p>
-      {inviteCode ? <button className="primary-button" onClick={() => { setCode(inviteCode); setStep('preferences') }}>Join Huddle <span>→</span></button> : <button className="primary-button" disabled={loading} onClick={startSession}>Start a Huddle <span>→</span></button>}
-      <div className="divider"><span>OR JOIN YOUR GROUP</span></div>
-      <form className="join-form" onSubmit={openInvite}>
-        <input aria-label="Huddle invite code" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="Enter invite code" maxLength={8} />
-        <button type="submit" disabled={loading}>Join</button>
-      </form>
-      <p className="fine-print">Each person adds their own preferences. No reading past messages.</p>
-    </div>
+  async function copyText(value, success) {
+    try { await navigator.clipboard.writeText(value); setNotice(success) }
+    catch { setError('Clipboard access was blocked. Copy the invite or plan text from the screen.') }
   }
-
-  function renderPreferences() {
-    return <form className="view-card preferences" onSubmit={submitPreferences}>
-      <div className="step-heading"><div><p className="eyebrow">HUDDLE {code && `· ${code}`}</p><h1>Add your<br /><em>two cents.</em></h1></div><span className="step-count">01 <i>/ 02</i></span></div>
-      <p className="subhead">Your answers help find a plan that works for the whole crew.</p>
-      <label className="field-label" htmlFor="participant-name">YOUR NAME</label>
-      <input id="participant-name" className="text-input" required value={name} onChange={(event) => setName(event.target.value)} placeholder="What should we call you?" maxLength={40} />
-
-      <div className="section-label">WHAT SOUNDS FUN?</div>
-      <div className="activity-grid">
-        {activityOptions.map((item) => <button type="button" key={item.id} className={`activity-chip ${interests.includes(item.id) ? 'active' : ''}`} onClick={() => toggle(setInterests, interests, item.id)}><span>{item.emoji}</span>{item.label}</button>)}
-      </div>
-
-      <div className="budget-heading"><div><div className="section-label">BUDGET PER PERSON</div><span className="muted">What feels comfortable?</span></div><strong>${budget}</strong></div>
-      <input aria-label="Budget per person" className="budget-slider" type="range" min="10" max="100" step="5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} />
-      <div className="range-labels"><span>$10</span><span>$100+</span></div>
-
-      <div className="availability-heading"><div><div className="section-label">WHEN ARE YOU FREE?</div><span className="muted">Pick any times that work</span></div><div className="calendar-actions">
-        {googleUser && <button type="button" className="plain-action" onClick={signOutGoogle}>Sign out</button>}
-        <button type="button" className={`calendar-connect ${calendarDemo || googleUser ? 'connected' : ''}`} disabled={checkingCalendar} onClick={googleUser ? checkGoogleCalendar : googleReady ? beginGoogleAuth : connectCalendarDemo}><span>▦</span>{checkingCalendar ? 'Checking…' : googleUser ? 'Check my Google Calendar' : googleReady ? 'Connect Google Calendar' : calendarDemo ? 'Reset sample calendar' : 'Try sample calendar'}</button>
-      </div></div>
-      <div className="time-list">{timeOptions.map((item) => <label key={item.id} className="time-option"><input type="checkbox" checked={availability.includes(item.id)} onChange={() => toggle(setAvailability, availability, item.id)} /><span>{item.label}</span></label>)}</div>
-      {googleUser && <p className="fine-print align-left">Signed in as {googleUser.email || googleUser.name}. Sign-in is remembered on this browser. Only free/busy availability is requested.</p>}
-      {calendarDemo && <p className="fine-print align-left">Simulated availability only. HUDDLE has not accessed your Google Calendar.</p>}
-
-      <label className="field-label needs-label" htmlFor="ideas">IDEAS YOU’D LIKE TO TRY <span>OPTIONAL</span></label>
-      <textarea id="ideas" className="text-input needs-input" value={ideas} onChange={(event) => setIdeas(event.target.value)} placeholder="Karaoke, escape room, beach picnic…" maxLength={600} rows={2} />
-
-      <label className="field-label needs-label" htmlFor="needs">FOOD, ACCESS, OR OTHER NEEDS <span>OPTIONAL</span></label>
-      <textarea id="needs" className="text-input needs-input" value={needs} onChange={(event) => setNeeds(event.target.value)} placeholder="Vegetarian, step-free access, nut allergy…" maxLength={300} rows={2} />
-      <label className="field-label travel-label" htmlFor="travel">HOW FAR WOULD YOU TRAVEL? <strong>{travelMiles} mi</strong></label>
-      <input id="travel" aria-label="Maximum travel distance in miles" className="budget-slider" type="range" min="1" max="25" value={travelMiles} onChange={(event) => setTravelMiles(Number(event.target.value))} />
-      {openAIReady ? <p className="fine-print align-left">Your interests, budget, needs, availability, and idea suggestions will go to OpenAI to make the group plans. Your name and Google identity are excluded.</p> : <p className="fine-print align-left">OpenAI is not configured yet; sample plan ideas will be used.</p>}
-      <button className="primary-button" type="submit" disabled={loading || !interests.length || !availability.length}>{loading ? 'Saving preferences & making plans…' : 'Add my preferences'} <span>→</span></button>
-      {session && <p className="fine-print">{session.responses.length} {session.responses.length === 1 ? 'person has' : 'people have'} added preferences so far.</p>}
-    </form>
+  async function signOut() {
+    await api('/api/logout', { method: 'POST', body: '{}' })
+    setUser(null); setSession(null); setSessionId(''); setStep('welcome')
   }
+  const onInvitePage = new URLSearchParams(window.location.search).has('session')
 
-  function renderResults() {
-    return <div className="view-card ideas">
-      <button className="back-link" onClick={() => setStep('preferences')}>← Edit my preferences</button>
-      <div className="step-heading"><div><p className="eyebrow">HUDDLE · {code}</p><h1>Ideas for<br /><em>your crew.</em></h1></div><span className="member-count">♙ {session?.responses.length || 0}</span></div>
-      <p className="subhead">{session?.source === 'openai' ? 'Ideas grouped by OpenAI from your submitted preferences.' : 'Sample ideas are ranked using the submitted group preferences.'} No perfect-fit claims.</p>
-      <div className="participant-strip">{session?.responses.map((person) => <span key={person.id} title={`${person.name}: $${person.budget} budget`}>{person.name.slice(0, 1).toUpperCase()}</span>)}</div>
-      <div className="idea-list">
-        {plans.map((plan) => <button key={plan.id} className={`idea-card ${selected?.id === plan.id ? 'selected' : ''}`} onClick={() => setSelectedPlan(plan.id)}>
-          <span className="idea-emoji">{plan.emoji}</span>
-          <span className="idea-details"><strong>{plan.title}</strong><span>~${plan.cost} per person · within {plan.miles} mi · {timeOptions.find((time) => time.id === plan.timeSlot)?.label}</span><span>{plan.description}</span><span className="plan-reasons">{plan.rationale}</span>
-            <span className="fit-badges"><i>{plan.budgetFits}/{session.responses.length} budgets</i><i>{plan.availabilityFits}/{session.responses.length} schedules</i></span>
-          <span className="plan-reasons">{plan.strengths.join(' · ')}</span></span>
-          <span className="radio-check">{selected?.id === plan.id ? '✓' : ''}</span>
-        </button>)}
-      </div>
-      <div className="responses-panel"><strong>Group preferences · {session?.responses.length} submitted</strong>{session?.responses.map((person) => <p key={person.id}><span>{person.name}</span><span>${person.budget} · {person.interests.join(', ') || 'no interests selected'}{person.ideas ? ` · Ideas: ${person.ideas}` : ''}{person.needs ? ` · Needs: ${person.needs}` : ''}</span></p>)}</div>
-      {selected?.compromise && <p className="tradeoff-note">No idea fits every preference yet. HUDDLE is showing the best compromise and its tradeoffs.</p>}
-      <button className="secondary-button" onClick={refreshGroup}>Refresh group responses <span>↻</span></button>
-      <button className="primary-button" onClick={copyInvite}>Copy group invite <span>↗</span></button>
-      <button className="secondary-button" onClick={() => setStep('itinerary')}>Choose this plan <span>→</span></button>
-    </div>
-  }
-
-  function renderItinerary() {
-    return <div className="view-card shared">
-      <div className="shared-check">✓</div><p className="eyebrow">HUDDLE · {code}</p>
-      <h1>Your plan,<br /><em>together.</em></h1>
-      <p className="subhead">Here’s the idea to bring back to your group chat.</p>
-      {selected && <div className="share-preview"><span>{selected.emoji}</span><div><strong>{selected.title}</strong><small>About ${selected.cost} per person · within {selected.miles} mi</small><small>{selected.description}</small></div></div>}
-      <div className="responses-panel"><strong>Before you go</strong><p>Confirm the time and any food or accessibility needs with your group and the venue.</p></div>
-      <button className="primary-button" onClick={shareItinerary}>Share itinerary <span>↗</span></button>
-      <button className="secondary-button" onClick={() => setStep('results')}>Back to plan options</button>
-    </div>
-  }
-
-  return <main className="app-shell">
-    <header className="topbar"><a className="brand" href="/" onClick={(event) => { event.preventDefault(); setStep('welcome') }}><span className="brand-mark">✦</span><span>HUDDLE</span></a><span className="demo-pill"><i /> HACKATHON PREVIEW</span></header>
-    <section className="content" aria-live="polite">
-      {loading && step === 'welcome' && <div className="loading-card">Loading Huddle…</div>}
-      {!loading && step === 'welcome' && renderWelcome()}
-      {step === 'preferences' && renderPreferences()}
-      {step === 'results' && renderResults()}
-      {step === 'itinerary' && renderItinerary()}
-      {error && <p className={`status-message ${error.includes('copied') ? 'success' : ''}`} role="status">{error}<button onClick={() => setError('')} aria-label="Dismiss">×</button></p>}
-    </section>
-    <footer className="footer"><span>HUDDLE</span><span>Turn everyone’s input into a plan.</span><span>Your preferences stay yours.</span></footer>
-  </main>
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setStep(user ? 'home' : 'welcome') }}>
+          <span className="brand-mark">✦</span><span>HUDDLE</span>
+        </a>
+        <span className="demo-pill"><i /> GROUP HANGOUT PLANNER</span>
+      </header>
+      <section className="content" aria-live="polite">
+        {step === 'welcome' && (
+          <div className="welcome view-card">
+            <div className="sparkle-orbit"><span>✦</span><i>✦</i><b>✦</b></div>
+            <p className="eyebrow">GOOD PLANS, MADE TOGETHER</p>
+            <h1>{onInvitePage ? 'Join the group’s' : 'Make your group chat'}<br /><em>{onInvitePage ? 'hangout plan.' : 'go somewhere.'}</em></h1>
+            <p className="subhead">Share your interests, budget, needs, and availability. HUDDLE finds ideas your group can enjoy together.</p>
+            <button className="google-button" onClick={signIn}><span className="google-g">G</span> Continue with Google</button>
+            <p className="fine-print">Calendar access is used only to check free/busy times.</p>
+            <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>
+            <div className="trust-row"><span>✧</span> You choose what to share <b>·</b> No chat-history reading</div>
+          </div>
+        )}
+        {step === 'home' && (
+          <div className="view-card">
+            <p className="eyebrow">WELCOME, {user?.name?.toUpperCase() || 'FRIEND'}</p>
+            <h1>Plan something<br /><em>together.</em></h1>
+            <p className="subhead align-left">Start a group session, then invite everyone with a link. Each person adds their own preferences and availability.</p>
+            <button className="primary-button" onClick={createSession} disabled={loading}>{loading ? 'Starting…' : 'Create a group plan'} <span>→</span></button>
+            <div className="calendar-connect connected">
+              <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>Google Calendar</strong><span>{user?.calendarConnected ? 'Connected · free/busy access' : 'Not connected · add times manually'}</span></div>
+              {!user?.calendarConnected && <button className="connect-button" onClick={signIn}>Connect</button>}
+            </div>
+            <button className="demo-link" onClick={signOut}>Sign out</button>
+          </div>
+        )}
+        {step === 'preferences' && (
+          <div className="preferences view-card">
+            <button className="back-link" onClick={() => setStep('home')}>← Back</button>
+            <p className="eyebrow">YOUR GROUP · {responseCount} RESPONDED</p>
+            <h1>Add your<br /><em>preferences.</em></h1>
+            <p className="subhead">Everyone submits their own choices. HUDDLE compares them for the group.</p>
+            <div className="section-label">WHAT SOUNDS FUN?</div>
+            <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}><span>{activityEmoji(activity)}</span>{activity}</button>)}</div>
+            <div className="budget-heading"><div><div className="section-label">YOUR BUDGET PER PERSON</div><span className="muted">HUDDLE will look for affordable matches</span></div><strong>{'$' + budget}</strong></div>
+            <input aria-label="Maximum budget per person" className="budget-slider" type="range" min="10" max="100" step="5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} />
+            <div className="range-labels"><span>$10</span><span>$100</span></div>
+            <label className="form-label">Preferred area<input className="text-input" value={location} maxLength={80} onChange={(event) => setLocation(event.target.value)} placeholder="Near campus" /></label>
+            <label className="form-label">Needs to consider<input className="text-input" value={needs} maxLength={240} onChange={(event) => setNeeds(event.target.value)} placeholder="Food, access, travel, or other needs" /></label>
+            <div className="section-label time-label">WHEN ARE YOU FREE?</div>
+            <p className="muted">Choose times manually, or let Google Calendar check free/busy.</p>
+            <div className="time-grid">{timeOptions.map(([value, label]) => <button key={value} className={'time-chip ' + (manualAvailability.includes(value) ? 'active' : '')} onClick={() => toggleTime(value)}>{label}</button>)}</div>
+            <div className={'calendar-connect ' + (user?.calendarConnected ? 'connected' : '')}>
+              <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'HUDDLE checks free/busy only' : 'Connect securely or use your selected times'}</span></div>
+              {!user?.calendarConnected && <button className="connect-button" onClick={signIn}>Connect</button>}
+            </div>
+            {inviteUrl && <button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link</button>}
+            <button className="primary-button" onClick={savePreferences} disabled={loading}>{loading ? 'Saving…' : 'Save my preferences'} <span>→</span></button>
+          </div>
+        )}
+        {step === 'ideas' && (
+          <div className="ideas view-card">
+            <button className="back-link" onClick={() => setStep('preferences')}>← Edit my preferences</button>
+            <p className="eyebrow">GROUP MATCH · {responseCount} RESPONSES</p>
+            <h1>Ideas for<br /><em>your group.</em></h1>
+            <p className="subhead align-left">{session?.participants.length || 1} people in this planning session. Options use preferences people shared.</p>
+            <div className="group-status">
+              <strong>{responseCount} of {session?.participants.length || 1} responded</strong>
+              <div className="progress-track"><span style={{ width: Math.max(8, Math.round(100 * responseCount / (session?.participants.length || 1))) + '%' }} /></div>
+              <span className="muted">{session?.participants.map((person) => person.name + (person.preferences ? ' ✓' : ' · waiting')).join('  ')}</span>
+            </div>
+            {plans.length > 0 ? (
+              <>
+                <div className="mode-note">{planMode === 'ai' || session?.planMode === 'ai' ? 'AI-written explanations · options checked against group rules' : 'Preference-matched ideas · AI explanations use a server key when configured'}</div>
+                <div className="idea-list">{plans.map((plan) => <button key={plan.id} className={'idea-card ' + (selectedPlan?.id === plan.id ? 'selected' : '')} onClick={() => setSelectedPlanId(plan.id)}>
+                  <span className="idea-emoji">{plan.emoji}</span><span className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · {'~$' + plan.price + '/person'}</span><span>{plan.matchCount}/{plan.participantCount} preferences fit · {plan.location}</span><small>{plan.rationale}</small></span><span className="radio-check">{selectedPlan?.id === plan.id ? '✓' : ''}</span>
+                </button>)}</div>
+                <button className="primary-button" onClick={() => selectedPlan && vote(selectedPlan.id)}>Vote for this plan <span>→</span></button>
+                {selectedPlan && <button className="secondary-button" onClick={() => copyText(selectedPlan.title + ' · ' + selectedPlan.time + ' · about $' + selectedPlan.price + ' per person', 'Plan text copied. Paste it into Messages.')}>Copy plan for Messages</button>}
+                <div className="vote-summary">Votes: {Object.values(session?.votes || {}).filter((voteId) => voteId === selectedPlan?.id).length} for this idea</div>
+              </>
+            ) : (
+              <div className="empty-plans"><p>Once people add preferences, HUDDLE can compare the group.</p><button className="primary-button" onClick={findPlans} disabled={loading}>{loading ? 'Finding a match…' : 'Find plans'} <span>→</span></button><button className="secondary-button" onClick={() => copyText(inviteUrl || window.location.href, 'Invite link copied. Share it in Messages.')}>Invite the group</button></div>
+            )}
+            <button className="secondary-button" onClick={refreshSession}>Refresh group responses</button>
+            <button className="demo-link" onClick={() => setStep('preferences')}>Update my answers</button>
+          </div>
+        )}
+      </section>
+      {(error || notice) && <div className={error ? 'toast error-toast' : 'toast'} role="status">{error || notice}<button onClick={() => { setError(''); setNotice('') }}>×</button></div>}
+      <footer className="footer"><span>HUDDLE</span><span>Plan together, effortlessly.</span><span>iMessage group planner</span></footer>
+    </main>
+  )
 }
-
+function activityEmoji(activity) {
+  return ({ 'Food & drinks': '🍜', Games: '🎳', Outdoors: '🌿', Movies: '🎬', 'Live music': '🎵', Coffee: '☕' })[activity]
+}
 export default App
