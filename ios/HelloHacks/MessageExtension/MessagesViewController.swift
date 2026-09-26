@@ -3,45 +3,48 @@ import UIKit
 import Messages
 
 final class MessagesViewController: MSMessagesAppViewController {
-    private var host: UIHostingController<ExtensionGameView>?
+    private var host: UIHostingController<HangoutPlannerView>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        showGame()
+        showPlanner()
     }
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
-        showGame()
+        showPlanner()
     }
 
-    private func showGame() {
+    private func showPlanner() {
         if let host {
             host.willMove(toParent: nil)
             host.view.removeFromSuperview()
             host.removeFromParent()
             self.host = nil
         }
-        let components = activeConversation?.selectedMessage?.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
-        let board = components?.queryItems?.first(where: { $0.name == "board" })?.value
-        let turn = components?.queryItems?.first(where: { $0.name == "turn" })?.value
-        let game = ExtensionGameView(initialBoard: board, initialTurn: turn ?? "X") { [weak self] board, nextTurn in
+
+        let planner = HangoutPlannerView { [weak self] plan in
             guard let conversation = self?.activeConversation else { return }
             let message = MSMessage()
             let layout = MSMessageTemplateLayout()
-            layout.caption = "HelloHacks tic-tac-toe"
-            layout.subcaption = "\(nextTurn)'s turn · \(board)"
+            layout.caption = "Hangout AI · \(plan.title)"
+            layout.subcaption = "\(plan.when) · about $\(plan.price) per person · Share with your group"
             var components = URLComponents()
             components.scheme = "hellohacks"
-            components.host = "game"
-            components.queryItems = [URLQueryItem(name: "board", value: board), URLQueryItem(name: "turn", value: nextTurn)]
+            components.host = "plan"
+            components.queryItems = [
+                URLQueryItem(name: "title", value: plan.title),
+                URLQueryItem(name: "when", value: plan.when),
+                URLQueryItem(name: "price", value: String(plan.price))
+            ]
             message.url = components.url
             message.layout = layout
             conversation.insert(message) { error in
-                if let error { print("Could not insert game move: \(error)") }
+                if let error { print("Could not share hangout plan: \(error)") }
             }
         }
-        let controller = UIHostingController(rootView: game)
+
+        let controller = UIHostingController(rootView: planner)
         addChild(controller)
         view.addSubview(controller.view)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
@@ -56,89 +59,196 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 }
 
-private struct ExtensionGameView: View {
-    let onShare: (String, String) -> Void
-    @State private var squares: [String]
-    @State private var mark: String
-    @State private var result: String?
+private struct HangoutPlan: Identifiable {
+    let id: Int
+    let emoji: String
+    let title: String
+    let when: String
+    let price: Int
+    let detail: String
 
-    init(initialBoard: String?, initialTurn: String, onShare: @escaping (String, String) -> Void) {
-        let restoredBoard: [String]
-        if let initialBoard {
-            let parsed = Array(initialBoard).map { $0 == "-" ? "" : String($0) }
-            restoredBoard = parsed.count == 9 ? parsed : Array(repeating: "", count: 9)
-        } else {
-            restoredBoard = Array(repeating: "", count: 9)
-        }
-        _squares = State(initialValue: restoredBoard)
-        _mark = State(initialValue: initialTurn == "O" ? "O" : "X")
-        self.onShare = onShare
-    }
+    static let suggestions = [
+        HangoutPlan(id: 0, emoji: "🍜🎳", title: "Ramen + Bowling", when: "Sat · 6:00 PM", price: 42, detail: "Dinner, then a game together"),
+        HangoutPlan(id: 1, emoji: "🍣📸", title: "Sushi + Photo booth", when: "Sat · 7:00 PM", price: 36, detail: "A cozy dinner and silly photos"),
+        HangoutPlan(id: 2, emoji: "🎳🍔", title: "Bowling + Burgers", when: "Sun · 5:30 PM", price: 48, detail: "A little friendly competition")
+    ]
+}
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
-    private let wins = [[0,1,2], [3,4,5], [6,7,8], [0,3,6], [1,4,7], [2,5,8], [0,4,8], [2,4,6]]
+private struct HangoutPlannerView: View {
+    let onVote: (HangoutPlan) -> Void
+    @State private var showingSuggestions = false
+    @State private var selectedPlan = 0
+
+    private let ink = Color(red: 0.055, green: 0.065, blue: 0.09)
+    private let panel = Color(red: 0.105, green: 0.12, blue: 0.15)
+    private let purple = Color(red: 0.51, green: 0.43, blue: 1.0)
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("TIC-TAC-TOE").font(.caption.bold()).tracking(1.5).foregroundStyle(.indigo)
-                    Text(result ?? "Your turn · \(mark)").font(.title2.bold())
-                }
-                Spacer()
-                Button("Reset", systemImage: "arrow.counterclockwise", action: reset)
-                    .labelStyle(.iconOnly)
-                    .accessibilityLabel("Reset game")
-            }
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(0..<9, id: \.self) { index in
-                    Button { play(at: index) } label: {
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color(uiColor: .secondarySystemBackground))
-                            .frame(height: 76)
-                            .overlay(Text(squares[index]).font(.system(size: 34, weight: .bold)).foregroundStyle(squares[index] == "X" ? .indigo : .pink))
+        ZStack {
+            ink.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    if showingSuggestions {
+                        suggestions
+                    } else {
+                        invitation
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!squares[index].isEmpty || result != nil)
                 }
+                .padding(20)
             }
-            Button(action: share) {
-                Label("Send move in iMessage", systemImage: "paperplane.fill")
+            .scrollIndicators(.hidden)
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(purple)
+                .frame(width: 38, height: 38)
+                .background(purple.opacity(0.16), in: Circle())
+            Text("Hangout AI").font(.headline.bold())
+            Spacer()
+            Text("GROUP PLANNER")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(.white.opacity(0.45))
+        }
+    }
+
+    private var invitation: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 36, weight: .medium))
+                    .foregroundStyle(purple)
+                    .padding(.top, 6)
+                Text("Plan this hangout")
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                Text("Find something fun that works for everyone in the chat.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showingSuggestions = true }
+            } label: {
+                Label("Find a plan", systemImage: "sparkles")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .background(.indigo, in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.vertical, 15)
+                    .background(LinearGradient(colors: [purple, Color(red: 0.39, green: 0.35, blue: 0.92)], startPoint: .leading, endPoint: .trailing), in: Capsule())
                     .foregroundStyle(.white)
             }
-            Text("Take turns in the conversation. Each move appears as a game card.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("STARTING WITH THESE IDEAS")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.1)
+                    .foregroundStyle(.white.opacity(0.48))
+                HStack(spacing: 9) {
+                    preferenceTile(icon: "dollarsign", title: "Budget", value: "$30–50")
+                    preferenceTile(icon: "calendar", title: "When", value: "Saturday")
+                    preferenceTile(icon: "fork.knife", title: "Interests", value: "Food · Games")
+                }
+            }
+            Text("Example preferences · Connect Google Calendar in setup to personalize availability.")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.4))
+                .lineSpacing(3)
         }
-        .padding(18)
-        .background(Color(uiColor: .systemBackground))
     }
 
-    private func play(at index: Int) {
-        guard squares[index].isEmpty, result == nil else { return }
-        squares[index] = mark
-        if wins.contains(where: { line in line.allSatisfy { squares[$0] == mark } }) {
-            result = "\(mark) wins!"
-        } else if !squares.contains("") {
-            result = "It's a draw"
-        } else {
-            mark = mark == "X" ? "O" : "X"
+    private var suggestions: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showingSuggestions = false }
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.66))
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Your plan").font(.system(size: 25, weight: .bold, design: .rounded))
+                Text("3 ideas · pick one for the group to vote on")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.58))
+            }
+
+            ForEach(HangoutPlan.suggestions) { plan in
+                planCard(plan)
+            }
+
+            Button {
+                onVote(HangoutPlan.suggestions[selectedPlan])
+            } label: {
+                Text("Share with the group")
+                    .font(.system(size: 15, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(LinearGradient(colors: [purple, Color(red: 0.39, green: 0.35, blue: 0.92)], startPoint: .leading, endPoint: .trailing), in: Capsule())
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            Text("Send an idea to the chat so everyone can weigh in.")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.42))
+                .frame(maxWidth: .infinity)
         }
     }
 
-    private func share() {
-        let board = squares.map { $0.isEmpty ? "-" : $0 }.joined()
-        onShare(board, mark)
+    private func preferenceTile(icon: String, title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.58))
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, minHeight: 57, alignment: .leading)
+        .padding(10)
+        .background(panel, in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(.white.opacity(0.06), lineWidth: 1))
     }
 
-    private func reset() {
-        squares = Array(repeating: "", count: 9)
-        mark = "X"
-        result = nil
+    private func planCard(_ plan: HangoutPlan) -> some View {
+        let isSelected = selectedPlan == plan.id
+        return Button {
+            selectedPlan = plan.id
+        } label: {
+            HStack(spacing: 12) {
+                Text(plan.emoji).font(.system(size: 25))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(plan.title).font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                    Text(plan.detail).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                    HStack(spacing: 10) {
+                        Label(plan.when, systemImage: "calendar")
+                        Label("~$\(plan.price)/person", systemImage: "person")
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.62))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 21))
+                    .foregroundStyle(isSelected ? purple : .white.opacity(0.35))
+            }
+            .padding(13)
+            .background(panel, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(isSelected ? purple : .white.opacity(0.07), lineWidth: isSelected ? 1.5 : 1))
+        }
+        .buttonStyle(.plain)
     }
 }
