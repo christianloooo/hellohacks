@@ -15,6 +15,7 @@ try {
 const PORT = Number(process.env.PORT || 3001)
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || FRONTEND_ORIGIN
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:' + PORT + '/auth/google/callback'
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Vancouver'
 const DEMO_MODE = process.env.DEMO_MODE !== 'false'
 const DATA_FILE = join(here, 'data', 'sessions.json')
@@ -33,7 +34,7 @@ function json(res, status, value) {
 }
 function cookie(res, name, value, maxAge) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
-  res.setHeader('Set-Cookie', name + '=' + encodeURIComponent(value) + '; Path=/; HttpOnly; SameSite=Lax' + secure + '; Max-Age=' + maxAge)
+  res.appendHeader('Set-Cookie', name + '=' + encodeURIComponent(value) + '; Path=/; HttpOnly; SameSite=Lax' + secure + '; Max-Age=' + maxAge)
 }
 function cookies(req) {
   return Object.fromEntries((req.headers.cookie || '').split(';').map((part) => {
@@ -162,7 +163,11 @@ async function busyPeriods(person) {
   })
   const result = await response.json()
   if (!response.ok) throw Object.assign(new Error(result.error?.message || 'Calendar availability request failed.'), { status: 502 })
-  return result.calendars?.primary?.busy || []
+  const calendar = result.calendars?.primary
+  if (calendar?.errors?.length || !Array.isArray(calendar?.busy)) {
+    throw Object.assign(new Error('Google Calendar availability could not be retrieved. Reconnect Calendar and grant availability access.'), { status: 502 })
+  }
+  return calendar.busy
 }
 function overlaps(slot, busy) { return busy.some((range) => new Date(range.start) < slot.end && new Date(range.end) > slot.start) }
 
@@ -235,14 +240,21 @@ async function makePlans(session) {
   return { plans: session.plans, planMode: session.planMode, availableTimeFound: shared.length > 0, calendarWarnings }
 }
 
-async function googleStart(res) {
+async function googleStart(res, url) {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) return json(res, 503, { error: 'Google sign-in is not configured. Add OAuth credentials to backend/.env.' })
+  // Start on the callback host so the browser returns the OAuth state cookie.
+  const callback = new URL(GOOGLE_REDIRECT_URI)
+  if (url.hostname !== callback.hostname) {
+    res.writeHead(302, { Location: new URL('/auth/google', callback).href })
+    res.end()
+    return
+  }
   const state = newId(24)
   oauthStates.set(state, Date.now() + 600000)
   cookie(res, STATE_COOKIE, state, 600)
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
-    redirect_uri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:' + PORT + '/auth/google/callback',
+    redirect_uri: GOOGLE_REDIRECT_URI,
     response_type: 'code', scope: GOOGLE_SCOPE, state, access_type: 'offline', prompt: 'consent',
   })
   res.writeHead(302, { Location: 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString() })
@@ -260,7 +272,7 @@ async function googleCallback(req, res, url) {
       code: url.searchParams.get('code') || '',
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:' + PORT + '/auth/google/callback',
+      redirect_uri: GOOGLE_REDIRECT_URI,
       grant_type: 'authorization_code',
     }),
   })
@@ -270,7 +282,11 @@ async function googleCallback(req, res, url) {
   const profile = await profileResponse.json()
   if (!profileResponse.ok || !profile.sub) throw Object.assign(new Error('Google did not return a profile.'), { status: 400 })
   const existing = credentialsByUser.get(profile.sub)
-  credentialsByUser.set(profile.sub, { accessToken: token.access_token, expiresAt: Date.now() + (token.expires_in || 3600) * 1000, refreshToken: token.refresh_token || existing?.refreshToken || null })
+  const grantedScopes = new Set((token.scope || '').split(' '))
+  const calendarGranted = ['calendar.events.freebusy', 'calendar.freebusy', 'calendar.readonly', 'calendar'].some((scope) => grantedScopes.has('https://www.googleapis.com/auth/' + scope))
+  if (calendarGranted) {
+    credentialsByUser.set(profile.sub, { accessToken: token.access_token, expiresAt: Date.now() + (token.expires_in || 3600) * 1000, refreshToken: token.refresh_token || existing?.refreshToken || null })
+  }
   const authId = newId(32)
   const user = { id: profile.sub, name: text(profile.name || profile.given_name || 'Google user', 80), email: text(profile.email, 160), provider: 'google' }
   loginSessions.set(authId, { user, createdAt: Date.now() })
@@ -283,8 +299,14 @@ await loadSessions()
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost:' + PORT))
   try {
-    if (req.method === 'GET' && url.pathname === '/auth/google') return await googleStart(res)
+    if (req.method === 'GET' && url.pathname === '/auth/google') return await googleStart(res, url)
     if (req.method === 'GET' && url.pathname === '/auth/google/callback') return await googleCallback(req, res, url)
+    if (req.method === 'GET' && url.pathname === '/api/calendar/freebusy') {
+      const user = requireUser(req)
+      const busy = await busyPeriods({ userId: user.id })
+      if (busy === null) return json(res, 401, { error: 'Connect Google Calendar before requesting availability.' })
+      return json(res, 200, { calendarId: 'primary', timeZone: TIME_ZONE, busy })
+    }
     if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, name: 'HUDDLE API' })
     if (req.method === 'GET' && url.pathname === '/api/me') {
       const user = userFor(req)
