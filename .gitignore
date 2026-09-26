@@ -28,7 +28,7 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 .build/
-
 # Local integration secrets and session data
 backend/.env
 backend/data/
+.env

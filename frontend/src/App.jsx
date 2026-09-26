@@ -26,11 +26,9 @@ function App() {
   const [manualAvailability, setManualAvailability] = useState([])
   const [needs, setNeeds] = useState('')
   const [location, setLocation] = useState('near campus')
-  const [selectedPlanId, setSelectedPlanId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [planMode, setPlanMode] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -59,8 +57,6 @@ function App() {
   }, [])
 
   const responseCount = session?.participants.filter((person) => person.preferences).length || 0
-  const plans = session?.plans || []
-  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || plans[0]
   function signIn() {
     const querySession = new URLSearchParams(window.location.search).get('session')
     const sessionToRestore = querySession || sessionId
@@ -70,7 +66,8 @@ function App() {
   async function beginDemo() {
     setError(''); setLoading(true)
     try {
-      const result = await api('/api/demo/session', { method: 'POST', body: '{}' })
+      const invitedSession = new URLSearchParams(window.location.search).get('session')
+      const result = await api('/api/demo/session', { method: 'POST', body: JSON.stringify(invitedSession ? { sessionId: invitedSession } : {}) })
       setUser(result.user); setSessionId(result.sessionId)
       setInviteUrl(window.location.origin + '/?session=' + encodeURIComponent(result.sessionId))
       const loaded = await api('/api/sessions/' + result.sessionId + '/join', { method: 'POST', body: '{}' })
@@ -98,30 +95,9 @@ function App() {
     setError(''); setLoading(true)
     try {
       const result = await api('/api/sessions/' + sessionId + '/preferences', { method: 'PUT', body: JSON.stringify({ interests: selectedActivities, budget, needs, location, manualAvailability }) })
-      setSession(result.session); setNotice('Your preferences are saved for this group.'); setStep('ideas')
+      setSession(result.session); setNotice('Your preferences are saved. Open HUDDLE in Messages to generate ideas.'); setStep('submitted')
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
-  }
-  async function refreshSession() {
-    const result = await api('/api/sessions/' + sessionId)
-    setSession(result.session)
-  }
-  async function findPlans() {
-    setError(''); setLoading(true)
-    try {
-      const result = await api('/api/sessions/' + sessionId + '/plans', { method: 'POST', body: '{}' })
-      setPlanMode(result.planMode); await refreshSession(); setSelectedPlanId(0)
-      setNotice(result.availableTimeFound ? 'Plans use your group’s shared availability.' : 'No shared slot matched; showing the nearest suggested window.')
-      if (result.calendarWarnings?.length) setNotice('Some calendars could not be checked. Add manual availability or reconnect Google Calendar.')
-    } catch (err) { setError(err.message) }
-    finally { setLoading(false) }
-  }
-  async function vote(planId) {
-    setError(''); setSelectedPlanId(planId)
-    try {
-      const result = await api('/api/sessions/' + sessionId + '/vote', { method: 'POST', body: JSON.stringify({ planId }) })
-      setSession(result.session); setNotice('Your vote is saved.')
-    } catch (err) { setError(err.message) }
   }
   async function copyText(value, success) {
     try { await navigator.clipboard.writeText(value); setNotice(success) }
@@ -191,32 +167,18 @@ function App() {
             <button className="primary-button" onClick={savePreferences} disabled={loading}>{loading ? 'Saving…' : 'Save my preferences'} <span>→</span></button>
           </div>
         )}
-        {step === 'ideas' && (
-          <div className="ideas view-card">
-            <button className="back-link" onClick={() => setStep('preferences')}>← Edit my preferences</button>
-            <p className="eyebrow">GROUP MATCH · {responseCount} RESPONSES</p>
-            <h1>Ideas for<br /><em>your group.</em></h1>
-            <p className="subhead align-left">{session?.participants.length || 1} people in this planning session. Options use preferences people shared.</p>
-            <div className="group-status">
-              <strong>{responseCount} of {session?.participants.length || 1} responded</strong>
-              <div className="progress-track"><span style={{ width: Math.max(8, Math.round(100 * responseCount / (session?.participants.length || 1))) + '%' }} /></div>
-              <span className="muted">{session?.participants.map((person) => person.name + (person.preferences ? ' ✓' : ' · waiting')).join('  ')}</span>
+        {step === 'submitted' && (
+          <div className="view-card shared">
+            <div className="shared-check">✓</div>
+            <p className="eyebrow">HUDDLE · {sessionId}</p>
+            <h1>You’re in,<br /><em>{user?.name?.split(' ')[0] || 'friend'}.</em></h1>
+            <p className="subhead">Your preferences are saved. The group’s plans are generated and shared from the HUDDLE iMessage extension.</p>
+            <div className="responses-panel">
+              <strong>Next · Open Messages</strong>
+              <p>Return to your group chat, tap +, choose HUDDLE, then tap “Generate ideas.” Pick a plan and share it right back into the conversation.</p>
             </div>
-            {plans.length > 0 ? (
-              <>
-                <div className="mode-note">{planMode === 'ai' || session?.planMode === 'ai' ? 'AI-written explanations · options checked against group rules' : 'Preference-matched ideas · AI explanations use a server key when configured'}</div>
-                <div className="idea-list">{plans.map((plan) => <button key={plan.id} className={'idea-card ' + (selectedPlan?.id === plan.id ? 'selected' : '')} onClick={() => setSelectedPlanId(plan.id)}>
-                  <span className="idea-emoji">{plan.emoji}</span><span className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · {'~$' + plan.price + '/person'}</span><span>{plan.matchCount}/{plan.participantCount} preferences fit · {plan.location}</span><small>{plan.rationale}</small></span><span className="radio-check">{selectedPlan?.id === plan.id ? '✓' : ''}</span>
-                </button>)}</div>
-                <button className="primary-button" onClick={() => selectedPlan && vote(selectedPlan.id)}>Vote for this plan <span>→</span></button>
-                {selectedPlan && <button className="secondary-button" onClick={() => copyText(selectedPlan.title + ' · ' + selectedPlan.time + ' · about $' + selectedPlan.price + ' per person', 'Plan text copied. Paste it into Messages.')}>Copy plan for Messages</button>}
-                <div className="vote-summary">Votes: {Object.values(session?.votes || {}).filter((voteId) => voteId === selectedPlan?.id).length} for this idea</div>
-              </>
-            ) : (
-              <div className="empty-plans"><p>Once people add preferences, HUDDLE can compare the group.</p><button className="primary-button" onClick={findPlans} disabled={loading}>{loading ? 'Finding a match…' : 'Find plans'} <span>→</span></button><button className="secondary-button" onClick={() => copyText(inviteUrl || window.location.href, 'Invite link copied. Share it in Messages.')}>Invite the group</button></div>
-            )}
-            <button className="secondary-button" onClick={refreshSession}>Refresh group responses</button>
-            <button className="demo-link" onClick={() => setStep('preferences')}>Update my answers</button>
+            {inviteUrl && <button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link <span>↗</span></button>}
+            <button className="primary-button" onClick={() => setStep('preferences')}>Edit my preferences</button>
           </div>
         )}
       </section>

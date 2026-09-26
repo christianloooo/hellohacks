@@ -1,5 +1,5 @@
 # HUDDLE frontend
 
-This React/Vite app is the preference and voting interface opened from a shared HUDDLE invite. It calls the Node backend using `/api` and `/auth`; Vite proxies those paths to `http://localhost:3001` during development.
+This React/Vite site is used for group setup and collecting each person’s preferences. After submitting, return to HUDDLE in Messages to generate and share ideas.
 
-Start the backend first with `cd backend && npm run dev`, then start this app with `npm install && npm run dev`. The **Try a group demo** path works without OAuth credentials. See the repository README for Google OAuth, Calendar, optional AI, and iMessage setup.
+From the repository root, run `npm run dev` to start both the backend and website. Or start them separately with `cd backend && npm run dev` and `cd frontend && npm run dev`. Vite proxies `/api` and `/auth` to the backend on `localhost:3001`.

@@ -1,69 +1,36 @@
 # HUDDLE
 
-HUDDLE helps a group turn individual preferences into a hangout plan. The iMessage extension creates a shared invite; each person opens it, signs in, adds their own interests, budget, needs, and availability, then votes on suggested plans. The app does not read message history.
-
-## What is implemented
-
-- **Web app** (`frontend`): sign-in screen, group invite joining, preferences, calendar connection status, suggested plans, voting, and copy-to-Messages actions.
-- **Backend** (`backend/server.mjs`): Google OAuth, session membership, preference storage, free/busy lookups, matching rules, optional AI-written explanations, and votes.
-- **iMessage extension** (`ios/HelloHacks/MessageExtension`): opens from the Messages attachment drawer and creates a shareable HUDDLE invite through the API.
-- **Demo mode**: creates a sample group so the flow can be presented without OAuth credentials.
+HUDDLE helps an iMessage group turn each person’s preferences and availability into a hangout plan. People submit their own input on the website; the Messages extension generates plan ideas and shares the chosen one in the group chat. HUDDLE does not read chat history.
 
 ## Run the web demo
 
-Use two terminals from the repository root.
+From the project root, run `npm run dev`. This starts the backend on port 3001 and the Vite website on port 5173. Open the Vite URL printed in the terminal and choose **Try a group demo**. The demo uses sample plans if `OPENAI_API_KEY` is not set.
 
-1. Start the backend:
+The backend uses Node’s built-in modules. The frontend uses the dependencies already in `frontend/package.json`.
 
-   ```sh
-   cd backend
-   cp .env.example .env
-   npm run dev
-   ```
+## Flow
 
-2. In another terminal, start the frontend:
+1. Start a group in the Messages extension, or join using the code from an invite card.
+2. Each person opens the invite website and submits their interests, budget, needs, and availability.
+3. Return to the group chat, open HUDDLE from the Messages app drawer, and tap **Generate ideas**.
+4. Choose an idea and share it back into the conversation.
 
-   ```sh
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-3. Open the local Vite URL shown by the frontend and choose **Try a group demo**. No Google or OpenAI key is needed for the demo. The matching rules still produce plan ideas; the optional AI key only writes the short explanation text.
-
-The backend uses Node.js built-in modules. The frontend needs Node.js and npm to install its existing Vite/React dependencies.
+The website handles initial setup and each person’s preference form. Plan generation and sharing happen in Messages.
 
 ## Configure Google Calendar
 
-Google sign-in and Calendar access need credentials from a Google Cloud project; no app can create these on your behalf.
+Google sign-in and Calendar require credentials from a Google Cloud project. Enable the Calendar API, create a web OAuth client, add `http://localhost:3001/auth/google/callback` as an authorized redirect URI, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `backend/.env`. The app requests free/busy access only.
 
-1. Enable the Google Calendar API in Google Cloud.
-2. Configure the OAuth consent screen and add the demo accounts as test users.
-3. Create an OAuth client of type **Web application**.
-4. Add this exact authorized redirect URI: `http://localhost:3001/auth/google/callback`.
-5. Put the client ID and secret in `backend/.env`. Keep the secret on the backend only.
-6. Restart the backend, then use **Continue with Google**. The requested Calendar scope is free/busy; event titles and descriptions are not read.
+## Optional OpenAI plan generation
 
-For a deployed app, set `GOOGLE_REDIRECT_URI`, `FRONTEND_ORIGIN`, and `PUBLIC_APP_URL` to your HTTPS deployment URLs and add the redirect URL in Google Cloud.
-
-## Optional AI explanations
-
-Add an OpenAI API key to `OPENAI_API_KEY` in `backend/.env`. It stays on the backend. The server sends the group’s preference fields and candidate ideas to the Responses API to write short rationales. If the key is missing or the request fails, the built-in matching rules still work. Never put this key in frontend code.
+Set `OPENAI_API_KEY` in `backend/.env`. The key stays on the backend. If it is absent or the API is unavailable, HUDDLE uses its built-in sample plans.
 
 ## Run the iMessage extension
 
-1. Open `ios/HelloHacks/HelloHacks.xcodeproj` in Xcode.
-2. Select the `HelloHacks` scheme and an iPhone simulator or connected iPhone.
-3. In Signing & Capabilities, select your Apple developer team and replace the `com.example.HelloHacks` bundle IDs with identifiers owned by your team.
-4. Deploy the backend and web app to HTTPS, then set `HUDDLE_API_BASE_URL` in `ios/HelloHacks/MessageExtension/Info.plist` to the backend origin (for example, `https://api.example.com`).
-5. Build and run the host app. In Messages, open a conversation, tap **+**, and choose **HUDDLE**. Choose **Create group invite** and send the generated message.
+Open `ios/HelloHacks/HelloHacks.xcodeproj` in Xcode, choose the **HelloHacks** scheme, select an iPhone simulator or device, set your Apple development team, and run the host app. In Messages, open a conversation, tap **+**, then choose **HUDDLE**.
 
-The iMessage extension needs a reachable HTTPS backend to create a share link. A local `localhost` backend is not reachable from a physical phone. For a hackathon demo without an HTTPS deployment, present the web demo separately or configure a temporary HTTPS tunnel and use its stable backend URL. The host app and extension require Apple signing to run in Messages.
+The extension defaults to local development URLs in `ios/HelloHacks/MessageExtension/Info.plist`. Those URLs are suitable for the simulator. For a physical iPhone or a group on other devices, deploy the website and API to HTTPS, then set `HUDDLE_WEB_BASE_URL` and `HUDDLE_API_BASE_URL` in that plist to the deployed origins.
 
 ## Prototype limits
 
-- The plan catalog, estimated prices, and activity descriptions are sample data, not live venue search or booking.
-- Availability checks use a small set of upcoming weekend windows and Calendar free/busy data, or the participant’s manually chosen windows.
-- Sessions are stored locally in `backend/data/sessions.json`; OAuth sessions and tokens are memory-only and are lost on backend restart. This is a hackathon prototype, not production storage.
-- Demo mode is for local presentations. Set `DEMO_MODE=false` for a deployment.
-- The extension shares a group invite, while preferences, availability, and voting happen on the web app.
+Sessions and preferences are held in backend memory and disappear when the backend restarts. Google refresh tokens are stored separately in an encrypted local file. Plan costs are estimates; venue availability, prices, and accessibility details need to be confirmed with the venue.
