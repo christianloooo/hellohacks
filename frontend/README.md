@@ -1,9 +1,9 @@
-# Hangout AI frontend preview
+# HUDDLE web app
 
-This Vite app previews the onboarding flow: sign-in, activity and budget preferences, calendar connection, and sample hangout ideas. The iMessage extension lives in `../ios/HelloHacks`.
+The join field is on the first screen under **OR JOIN YOUR GROUP**. The iMessage extension shares a link with the code prefilled. Each person submits their own interests, budget, calendar availability, needs, travel range, and activity ideas.
 
-Run `npm install` and `npm run dev` from this directory to view the preview.
+Start the API (`cd backend && npm run dev`) and frontend (`cd frontend && npm run dev`) in separate terminals. The frontend proxies `/api` and `/auth` to `localhost:8787`.
 
-## Google integration
+Configure Google and OpenAI in `backend/.env`; see the repo README for scopes and OAuth redirect settings. Google’s free/busy scope is used to check slot availability. The web app receives a signed cookie, and the backend stores refresh tokens in an encrypted local file so users do not need to re-consent every visit. Session responses remain in memory and are lost if the backend restarts.
 
-The sign-in and calendar controls are demo interactions. To connect real Google accounts, configure an OAuth consent screen and a web OAuth client in Google Cloud, provide its client ID, request the appropriate Calendar scopes, and add a secure authorization-code flow with a backend token exchange. Do not put a Google client secret in this frontend. Calendar events and group preferences are not currently fetched or combined.
+OpenAI receives anonymous preference objects and user-submitted ideas, not names or Google identity. It returns structured ideas; the backend independently scores each one against budgets, availability, interests, and travel. This keeps hard fit claims out of the model’s control.
