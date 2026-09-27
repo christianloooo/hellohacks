@@ -29,11 +29,12 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
       }
       if (address.startsWith('https://www.googleapis.com/calendar/v3/users/me/calendarList?')) {
         const sub = options.headers.Authorization.replace('Bearer test-', '')
-        return json({ items: [{ id: sub + '-calendar', primary: true, selected: true }, { id: sub + '-shared', selected: true }] })
+        return json({ items: [{ id: sub + '-calendar', primary: true, selected: true }, { id: sub + '-shared', selected: true, accessRole: 'owner' }, { id: sub + '-subscription', selected: true, accessRole: 'reader' }] })
       }
       if (address === 'https://www.googleapis.com/calendar/v3/freeBusy') {
         if (mode === 'calendar-error') return json({ error: { message: 'Calendar API unavailable' } }, 403)
         const body = JSON.parse(options.body)
+        if (body.items.some(item => item.id.endsWith('-subscription'))) throw new Error('Shared subscriptions must not block personal availability')
         const sub = options.headers.Authorization.replace('Bearer test-', '')
         const offset = sub === 'alice' ? 10 : 12
         return json({ calendars: Object.fromEntries(body.items.map(({ id }) => [id, mode === 'calendar-notfound' && id.endsWith('-shared') ? { errors: [{ domain: 'global', reason: 'notFound' }] } : { busy: mode === 'no-shared' ? [{ start: body.timeMin, end: body.timeMax }] : id.endsWith('-shared') ? [] : [{ start: new Date(Date.parse(body.timeMin) + offset * 3600000).toISOString(), end: new Date(Date.parse(body.timeMin) + (offset + 2) * 3600000).toISOString() }] }])) })

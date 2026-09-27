@@ -195,9 +195,10 @@ async function fetchBusy(person, window, allowPartial = false) {
       const response = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?' + params, { headers, signal: AbortSignal.timeout(15000) })
       const data = await response.json()
       if (!response.ok) throw new Error('Calendar list could not be loaded. Reconnect Google Calendar.')
-      // CalendarList.selected is optional and defaults to false. Only query the
-      // primary calendar and calendars explicitly selected in the user's UI.
-      ids.push(...(data.items || []).filter(c => !c.deleted && !c.hidden && (c.primary || c.selected === true)).map(c => c.id))
+      // A visible shared/subscribed calendar can contain other people's events.
+      // Personal availability includes the primary calendar and selected calendars
+      // this account owns; visibility alone is not consent to use shared events.
+      ids.push(...(data.items || []).filter(c => !c.deleted && !c.hidden && (c.primary || (c.selected === true && c.accessRole === 'owner'))).map(c => c.id))
       pageToken = data.nextPageToken
     } while (pageToken)
     ids = [...new Set(ids)]
@@ -469,6 +470,12 @@ const server = createServer(async (req, res) => {
       if (req.method === 'GET' && !extensionMatch[2]) return json(res, 200, extensionSession(session))
       if (req.method === 'POST' && extensionMatch[2] === 'plans') {
         if (!readiness(session).ready) return json(res, 409, { error: extensionSession(session).warning })
+        // This endpoint is the Messages extension's explicit Generate/Regenerate
+        // action. Clear previous results so startGeneration doesn't no-op.
+        if (session.plans?.length) {
+          invalidatePlans(session)
+          await saveSessions()
+        }
         await startGeneration(session)
         if (session.generationError) return json(res, 502, { error: session.generationError })
         return json(res, 200, extensionSession(session))
