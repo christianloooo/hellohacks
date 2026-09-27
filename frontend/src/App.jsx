@@ -13,7 +13,10 @@ async function api(path, options = {}) {
   return result
 }
 function App() {
-  const [step, setStep] = useState('welcome')
+  const [sharedPlanId] = useState(() => new URLSearchParams(window.location.search).get('plan'))
+  const [sharedPlan, setSharedPlan] = useState(null)
+  const [planError, setPlanError] = useState('')
+  const [step, setStep] = useState(() => new URLSearchParams(window.location.search).has('plan') ? 'shared-plan' : 'welcome')
   const [user, setUser] = useState(null)
   const [session, setSession] = useState(null)
   const [sessionId, setSessionId] = useState('')
@@ -26,8 +29,23 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [demoEnabled, setDemoEnabled] = useState(false)
 
   useEffect(() => {
+    api('/api/config').then(config => setDemoEnabled(config.demoEnabled)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!sharedPlanId) return
+    let cancelled = false
+    api('/api/plans/' + encodeURIComponent(sharedPlanId)).then(({ plan }) => {
+      if (!cancelled) setSharedPlan(plan)
+    }).catch(err => { if (!cancelled) setPlanError(err.message) })
+    return () => { cancelled = true }
+  }, [sharedPlanId])
+
+  useEffect(() => {
+    if (sharedPlanId) return
     let cancelled = false
     async function restore() {
       let authenticatedUser = null
@@ -71,7 +89,7 @@ function App() {
     }
     restore()
     return () => { cancelled = true }
-  }, [])
+  }, [sharedPlanId])
 
   useEffect(() => {
     if (!sessionId || !user) return
@@ -168,12 +186,30 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setStep(user ? 'home' : 'welcome') }}>
-          <span className="brand-mark">✦</span><span>HUDDLE</span>
+        <a className="brand" href="/" onClick={(event) => { if (sharedPlanId) return; event.preventDefault(); setStep(user ? 'home' : 'welcome') }}>
+          <img className="brand-logo" src={huddleFriends} alt="" width="52" height="54" /><span>HUDDLE</span>
         </a>
         <span className="demo-pill"><i /> GROUP HANGOUT PLANNER</span>
       </header>
       <section className={'content ' + (['preferences', 'submitted'].includes(step) ? 'content-wide' : '')} aria-live="polite">
+        {step === 'shared-plan' && (
+          <div className="view-card shared-plan-card">
+            <p className="eyebrow">A PLAN TO LOOK FORWARD TO</p>
+            {planError ? <><h1>Plan not found</h1><p role="alert">{planError}</p><a href="/">Go to HUDDLE</a></> : !sharedPlan ? <p role="status">Loading your plan…</p> : <>
+              <h1>{sharedPlan.title}</h1>
+              <p className="subhead">{sharedPlan.detail}</p>
+              <dl className="plan-facts">
+                <dt>When</dt><dd>{sharedPlan.time}<small>{sharedPlan.timeZone}</small></dd>
+                <dt>Where</dt><dd>{sharedPlan.location}</dd>
+                <dt>Budget</dt><dd>About CAD ${sharedPlan.price} per person</dd>
+              </dl>
+              <CalendarActions plan={sharedPlan} />
+              <p className="fine-print">Review the event, then save it to your calendar. Everyone adds their own copy.</p>
+              <button className="secondary-button" onClick={() => copyText(sharedPlan.shareUrl, 'Calendar link copied. Anyone with this link can add the plan.')}>Copy calendar link</button>
+              <p className="fine-print">This link keeps the original plan details, even if your group generates new ideas.</p>
+            </>}
+          </div>
+        )}
         {step === 'welcome' && (
           <div className="welcome view-card">
             <img className="welcome-art" src={huddleFriends} alt="HUDDLE’s hand-drawn crew: three friends ready for a hangout" width="319" height="327" />
@@ -182,8 +218,8 @@ function App() {
             <p className="subhead">Share your interests, budget, needs, and availability. HUDDLE finds ideas your group can enjoy together.</p>
             <button className="google-button" onClick={signIn}><span className="google-g">G</span> Continue with Google</button>
             <p className="fine-print">Group members can see your unavailable time blocks. Event details stay private.</p>
-            <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>
-            <div className="trust-row"><span>✧</span> You choose what to share <b>·</b> No chat-history reading</div>
+            {demoEnabled && <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>}
+            <div className="trust-row">You choose what to share <b>·</b> No chat-history reading</div>
           </div>
         )}
         {step === 'home' && (
@@ -218,7 +254,7 @@ function App() {
             </section>
             <p className="fine-print">Saved preferences and shared available times are sent to OpenAI to suggest activities. Group members see your unavailable blocks. Calendar event details are never read.</p>
             <div className="section-label">WHAT SOUNDS FUN?</div>
-            <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}><span>{activityEmoji(activity)}</span>{activity}</button>)}</div>
+            <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}>{activity}</button>)}</div>
             <div className="budget-heading"><div><div className="section-label">YOUR BUDGET PER PERSON</div><span className="muted">HUDDLE will look for affordable matches</span></div><strong>{'$' + budget}</strong></div>
             <input aria-label="Maximum budget per person" className="budget-slider" type="range" min="10" max="100" step="5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} />
             <div className="range-labels"><span>$10</span><span>$100</span></div>
@@ -248,7 +284,7 @@ function App() {
             {session?.generationStatus === 'generating' && <p className="mode-note" role="status">Checking shared availability and generating activities…</p>}
             {!session?.ready && <p className="mode-note">Waiting for everyone to save preferences and connect Calendar or choose available times.</p>}
             {session?.generationError && <p className="tradeoff-note" role="alert">{session.generationError}</p>}
-            {!!session?.plans.length && <><p className="mode-note">AI suggestions · Estimated costs in CAD · Times in {session.plans[0].timeZone}</p><div className="idea-list">{session.plans.map((plan) => <article className="idea-card" key={plan.id}><span className="idea-emoji">{plan.emoji}</span><div className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · about ${plan.price}/person</span><span>{plan.detail}</span><small>{plan.rationale}</small><button className="secondary-button" onClick={() => copyText(plan.title + ' · ' + plan.time + ' (' + plan.timeZone + ') · about $' + plan.price + '/person · ' + plan.location, 'Plan copied. Share it in your group chat.')}>Copy plan</button></div></article>)}</div></>}
+            {!!session?.plans.length && <><p className="mode-note">AI suggestions · Estimated costs in CAD · Times in {session.plans[0].timeZone}</p><div className="idea-list">{session.plans.map((plan) => <article className="idea-card" key={plan.id}><div className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · about ${plan.price}/person</span><span>{plan.detail}</span><small>{plan.rationale}</small><button className="secondary-button" onClick={() => copyText(plan.title + ' · ' + plan.time + ' (' + plan.timeZone + ') · about $' + plan.price + '/person · ' + plan.location + (plan.shareUrl ? '\nAdd to calendar: ' + plan.shareUrl : ''), 'Plan and calendar link copied. Share them in your group chat.')}>Copy plan & calendar link</button>{plan.shareUrl && <a className="calendar-plan-link" href={plan.shareUrl}>Add to calendar →</a>}</div></article>)}</div></>}
             {!session?.plans.length && session?.ready && <button className="primary-button" disabled={loading || session?.generationStatus === 'generating'} onClick={generateIdeas}>{loading || session?.generationStatus === 'generating' ? 'Generating…' : 'Generate ideas'}</button>}
             <button className="secondary-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}</button>
             {inviteUrl && <button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link <span>↗</span></button>}
@@ -261,7 +297,10 @@ function App() {
     </main>
   )
 }
-function activityEmoji(activity) {
-  return ({ 'Food & drinks': '🍜', Games: '🎳', Outdoors: '🌿', Movies: '🎬', 'Live music': '🎵', Coffee: '☕' })[activity]
+function CalendarActions({ plan }) {
+  return <div className="calendar-actions">
+    <a className="primary-button" href={plan.googleCalendarUrl} target="_blank" rel="noopener noreferrer">Add to Google Calendar ↗</a>
+    <a className="secondary-button" href={plan.calendarDownloadUrl}>Apple Calendar / Outlook (.ics) ↓</a>
+  </div>
 }
 export default App

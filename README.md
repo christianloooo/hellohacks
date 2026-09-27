@@ -48,3 +48,5 @@ Groups and preferences are stored in `backend/data/sessions.json`. Login session
 The long random invite ID acts as access to group summaries and plans from the Messages extension. Only share it with the intended group. Individual preferences and OAuth credentials are never returned through the extension endpoints.
 
 Personal availability uses each account’s primary calendar and selected calendars it owns. Shared calendars and subscriptions are excluded because their events may belong to other people. Overlapping busy periods appear in amber, labeled “Unavailable for multiple,” with the affected names available by tapping the block.
+
+Created by Jeffrey Qi, Catherine Xiao, Yulicia Kwok, Christian Lo

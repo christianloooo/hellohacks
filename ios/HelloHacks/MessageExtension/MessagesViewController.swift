@@ -38,6 +38,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         let rootView = HuddleExtensionView(
             initialCode: codeFromMessage ?? rememberedCode ?? "",
+            initialCalendarURL: activeConversation?.selectedMessage?.url.flatMap { url in
+                URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "plan" }) == true ? url : nil
+            },
             onCreateSession: { [weak self] in
                 guard let self else { throw HuddleAPIError.message("HUDDLE is unavailable. Close and reopen the extension.") }
                 let invite = try await HuddleAPI.createInvite(at: self.apiBaseURL)
@@ -79,6 +82,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let conversation = activeConversation else { return }
         let message = MSMessage()
         let layout = MSMessageTemplateLayout()
+        layout.image = UIImage(named: "huddle-friends")
         layout.caption = "HUDDLE · Plan with your group"
         layout.subcaption = "Open the invite to add preferences"
         message.url = invite.inviteURL
@@ -92,9 +96,17 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let conversation = activeConversation else { return }
         let message = MSMessage()
         let layout = MSMessageTemplateLayout()
+        layout.image = UIImage(named: "huddle-friends")
         layout.caption = "HUDDLE · \(plan.title)"
         layout.subcaption = "\(plan.time) · about $\(plan.price) per person"
-        message.url = sessionURL(code)
+        if let shareUrl = plan.shareUrl {
+            var components = URLComponents(url: shareUrl, resolvingAgainstBaseURL: false)
+            let items = (components?.queryItems ?? []) + [URLQueryItem(name: "session", value: code)]
+            components?.queryItems = items
+            message.url = components?.url
+        } else {
+            message.url = sessionURL(code)
+        }
         message.layout = layout
         conversation.insert(message) { error in
             if let error { print("Could not share HUDDLE plan: \(error.localizedDescription)") }
@@ -109,6 +121,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
 private struct HuddleExtensionView: View {
     let initialCode: String
+    let initialCalendarURL: URL?
     let onCreateSession: () async throws -> HuddleSession
     let onLoadSession: (String) async throws -> HuddleSession
     let onGenerateIdeas: (String) async throws -> HuddleSession
@@ -136,6 +149,13 @@ private struct HuddleExtensionView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
+                    if let url = initialCalendarURL {
+                        Link(destination: url) {
+                            Label("Open shared plan & add to calendar", systemImage: "calendar.badge.plus")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(coral)
+                    }
 
                     if let session {
                         sessionView(session)
@@ -176,11 +196,11 @@ private struct HuddleExtensionView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(coral)
-                .frame(width: 38, height: 38)
-                .background(coral.opacity(0.16), in: Circle())
+            Image(uiImage: UIImage(named: "huddle-friends") ?? UIImage())
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 50)
+                .accessibilityHidden(true)
             Text("HUDDLE").font(.custom("ChalkboardSE-Bold", size: 24)).foregroundStyle(coral).tracking(1)
             Spacer()
             Text("GROUP PLANNER")
@@ -284,6 +304,19 @@ private struct HuddleExtensionView: View {
                     onSharePlan(session.sessionId, selectedPlan)
                 }
 
+                if let url = selectedPlan?.shareUrl {
+                    Link(destination: url) {
+                        Label("Add selected plan to calendar", systemImage: "calendar.badge.plus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
+                    .foregroundStyle(coral)
+                    Text("Share the plan so everyone can add it to their own calendar.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(pencil.opacity(0.6))
+                }
+
                 Button {
                     Task { await generateIdeas() }
                 } label: {
@@ -302,7 +335,6 @@ private struct HuddleExtensionView: View {
         let isSelected = selectedPlan?.id == plan.id
         return Button { selectedPlanID = plan.id } label: {
             HStack(alignment: .top, spacing: 10) {
-                Text(plan.emoji).font(.system(size: 23))
                 VStack(alignment: .leading, spacing: 5) {
                     Text(plan.title).font(.system(size: 13, weight: .bold)).foregroundStyle(pencil)
                     Text("\(plan.time) · about $\(plan.price)/person")
@@ -405,7 +437,6 @@ private struct HuddleInvite: Decodable {
 
 private struct HuddlePlan: Decodable, Identifiable {
     let id: Int
-    let emoji: String
     let title: String
     let detail: String
     let time: String
@@ -414,6 +445,7 @@ private struct HuddlePlan: Decodable, Identifiable {
     let participantCount: Int
     let location: String
     let rationale: String
+    let shareUrl: URL?
 }
 
 private enum HuddleAPIError: LocalizedError {

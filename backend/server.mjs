@@ -1,9 +1,11 @@
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generateActivities } from './planner.mjs'
+import { calendarLinks, calendarFile } from './calendar.mjs'
+import { cleanPlanText } from './plan-text.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 try {
@@ -15,17 +17,21 @@ try {
 } catch {}
 const { planningWindow, candidateSlots, selectedSlot, overlaps, mergeBusy } = await import('./availability.mjs')
 const PORT = Number(process.env.PORT || 3001)
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
-const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || FRONTEND_ORIGIN
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:' + PORT + '/auth/google/callback'
+const hostedOrigin = process.env.PUBLIC_APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '')
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || hostedOrigin || 'http://localhost:5173'
+const PUBLIC_APP_URL = hostedOrigin || FRONTEND_ORIGIN
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || (hostedOrigin || 'http://localhost:' + PORT) + '/auth/google/callback'
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Vancouver'
 const DEMO_MODE = process.env.DEMO_MODE !== 'false'
-const DATA_FILE = join(here, 'data', 'sessions.json')
-const AUTH_FILE = join(here, 'data', 'auth-state.json')
+const DATA_DIRECTORY = process.env.DATA_DIR || join(here, 'data')
+const DATA_FILE = join(DATA_DIRECTORY, 'sessions.json')
+const AUTH_FILE = join(DATA_DIRECTORY, 'auth-state.json')
+const STATIC_DIRECTORY = resolve(process.env.STATIC_DIR || join(here, '../frontend/dist'))
 const COOKIE = 'huddle_session'
 const STATE_COOKIE = 'huddle_oauth_state'
 const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly'
 const sessions = new Map()
+const sharedPlans = new Map()
 const loginSessions = new Map()
 const credentialsByUser = new Map()
 const oauthStates = new Map()
@@ -87,7 +93,23 @@ function member(session, user) {
   return person
 }
 function publicSession(session, user) {
-  return { id: session.id, createdAt: session.createdAt, inviteUrl: inviteUrl(session.id), participants: session.participants.map(({ userId, ...person }) => ({ ...person, calendarConnected: credentialsByUser.has(userId), isYou: userId === user.id })), plans: session.plans || [], votes: session.votes || {}, planMode: session.planMode || null, generationStatus: session.generationStatus || 'waiting', generationError: session.generationError || null, ...readiness(session) }
+  return { id: session.id, createdAt: session.createdAt, inviteUrl: inviteUrl(session.id), participants: session.participants.map(({ userId, ...person }) => ({ ...person, calendarConnected: credentialsByUser.has(userId), isYou: userId === user.id })), plans: plansWithLinks(session), votes: session.votes || {}, planMode: session.planMode || null, generationStatus: session.generationStatus || 'waiting', generationError: session.generationError || null, ...readiness(session) }
+}
+function plansWithLinks(session) {
+  return (session.plans || []).map(plan => ({ ...plan, ...(plan.shareId ? calendarLinks(plan, PUBLIC_APP_URL) : {}) }))
+}
+function snapshotPlans(session) {
+  session.sharedPlans ||= []
+  for (const plan of session.plans || []) {
+    if (!Number.isFinite(Date.parse(plan.start)) || !Number.isFinite(Date.parse(plan.end)) || Date.parse(plan.end) <= Date.parse(plan.start)) continue
+    plan.shareId ||= newId()
+    if (!sharedPlans.has(plan.shareId)) {
+      const { shareId, title, detail, location, price, start, end, time, timeZone, emoji } = plan
+      const snapshot = { shareId, title, detail, location, price, start, end, time, timeZone, emoji, sharedAt: new Date().toISOString() }
+      session.sharedPlans.push(snapshot)
+      sharedPlans.set(shareId, snapshot)
+    }
+  }
 }
 function inviteUrl(id) { return PUBLIC_APP_URL.replace(/\/$/, '') + '/?session=' + encodeURIComponent(id) }
 function createSession(user, extra = []) {
@@ -106,12 +128,16 @@ async function loadSessions() {
   try {
     const saved = JSON.parse(await readFile(DATA_FILE, 'utf8'))
     for (const entry of saved) if (entry?.id) {
+      entry.plans = (entry.plans || []).map(cleanPlanText)
+      entry.sharedPlans = (entry.sharedPlans || []).map(cleanPlanText)
       entry.participants = entry.participants.filter((person) => !person.userId.startsWith('invite-'))
       if (entry.generationStatus === 'generating') {
         entry.generationStatus = 'error'
         entry.generationError = 'The server restarted while generating. Reconnect Calendar and try again.'
       }
       sessions.set(entry.id, entry)
+      for (const plan of entry.sharedPlans || []) sharedPlans.set(plan.shareId, plan)
+      snapshotPlans(entry)
     }
   } catch (error) { if (error.code !== 'ENOENT') console.error('Could not load sessions:', error.message) }
 }
@@ -274,7 +300,7 @@ function readiness(session) {
 function extensionSession(session) {
   return {
     sessionId: session.id, responseCount: session.participants.filter((person) => person.preferences).length,
-    participantCount: session.participants.length, plans: session.plans || [], planMode: session.planMode || null,
+    participantCount: session.participants.length, plans: plansWithLinks(session), planMode: session.planMode || null,
     generationStatus: session.generationStatus || 'waiting',
     warning: session.generationError || (!readiness(session).ready ? 'Waiting for everyone to save preferences and connect Calendar or choose available times.' : null),
   }
@@ -310,6 +336,7 @@ async function makePlans(session) {
   const plans = await generateActivities(people, shared.slice(0, 12), TIME_ZONE)
   if ((session.revision || 0) !== revision) return
   session.plans = plans
+  snapshotPlans(session)
   session.planMode = 'ai'
   session.generationStatus = 'ready'
   session.generationError = null
@@ -429,11 +456,54 @@ async function googleCallback(req, res, url) {
   res.writeHead(302, { Location: returnUrl.href }); res.end()
 }
 
+// Only compiled public assets are served. Source, secrets, and durable data stay
+// outside this directory. API/auth misses must never become an HTML response.
+async function serveFrontend(req, res, url) {
+  if (!['GET', 'HEAD'].includes(req.method) || /^\/(api|auth)(\/|$)/.test(url.pathname)) return false
+  let pathname
+  try { pathname = decodeURIComponent(url.pathname) } catch { return false }
+  if (pathname.includes('\\') || pathname.split('/').some(part => part.startsWith('.'))) return false
+  const path = resolve(STATIC_DIRECTORY, '.' + pathname)
+  if (path !== STATIC_DIRECTORY && !path.startsWith(STATIC_DIRECTORY + sep)) return false
+  let contents
+  let filename = pathname === '/' ? join(STATIC_DIRECTORY, 'index.html') : path
+  try { contents = await readFile(filename) } catch (error) {
+    if (!['ENOENT', 'EISDIR', 'ENOTDIR'].includes(error.code)) throw error
+    if (extname(pathname) || pathname.startsWith('/assets/')) return false
+    filename = join(STATIC_DIRECTORY, 'index.html')
+    try { contents = await readFile(filename) } catch (fallbackError) {
+      if (fallbackError.code === 'ENOENT') return false
+      throw fallbackError
+    }
+  }
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.webp': 'image/webp', '.jpg': 'image/jpeg' }
+  res.writeHead(200, {
+    'Content-Type': types[extname(filename)] || 'application/octet-stream',
+    'Content-Length': contents.length,
+    'Cache-Control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+  })
+  res.end(req.method === 'HEAD' ? undefined : contents)
+  return true
+}
+
 await loadSessions()
+// Persist migrated calendar links for existing ideas before serving them.
+if (sessions.size) await saveSessions()
 await loadAuthState()
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost:' + PORT))
   try {
+    const calendarMatch = url.pathname.match(/^\/api\/plans\/([A-Za-z0-9_-]+)(\/calendar\.ics)?$/)
+    if (req.method === 'GET' && calendarMatch) {
+      // An unguessable shared link grants access only to this plan's event details.
+      const plan = sharedPlans.get(calendarMatch[1])
+      if (!plan) return json(res, 404, { error: 'This plan link was not found. Ask your group for a new link.' })
+      if (!calendarMatch[2]) return json(res, 200, { plan: { ...plan, ...calendarLinks(plan, PUBLIC_APP_URL) } })
+      res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="huddle-plan.ics"', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+      return res.end(calendarFile(plan, PUBLIC_APP_URL))
+    }
     if (req.method === 'GET' && url.pathname === '/auth/google') return await googleStart(req, res, url)
     if (req.method === 'GET' && url.pathname === '/auth/google/callback') return await googleCallback(req, res, url)
     if (req.method === 'GET' && url.pathname === '/api/calendar/freebusy') {
@@ -443,6 +513,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { calendarCount: credentialsByUser.get(user.id)?.calendarCount || 1, timeZone: TIME_ZONE, busy })
     }
     if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, name: 'HUDDLE API' })
+    if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { demoEnabled: DEMO_MODE && process.env.NODE_ENV !== 'production' })
     if (req.method === 'GET' && url.pathname === '/api/me') {
       const user = userFor(req)
       return json(res, 200, { user: user ? { name: user.name, email: user.email, provider: user.provider, calendarConnected: credentialsByUser.has(user.id) } : null })
@@ -542,6 +613,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { session: publicSession(session, user) })
       }
     }
+    if (await serveFrontend(req, res, url)) return
     return json(res, 404, { error: 'Route not found.' })
   } catch (error) {
     const status = error.status || 500

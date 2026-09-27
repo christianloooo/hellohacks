@@ -11,7 +11,7 @@ import { once } from 'node:events'
 test('Google login, group invites, shared availability, and AI suggestions', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'huddle-integration-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
-  for (const filename of ['server.mjs', 'planner.mjs', 'availability.mjs']) await copyFile(new URL(filename, import.meta.url), join(directory, filename))
+  for (const filename of ['server.mjs', 'planner.mjs', 'availability.mjs', 'calendar.mjs', 'plan-text.mjs']) await copyFile(new URL(filename, import.meta.url), join(directory, filename))
   await writeFile(join(directory, 'providers.mjs'), `
     import { readFile, writeFile, appendFile } from 'node:fs/promises'
     const nativeFetch = globalThis.fetch
@@ -46,7 +46,7 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
         if (mode === 'ai-error') return json({ error: { message: 'Quota exceeded' } }, 429)
         if (mode === 'slow') await new Promise((resolve) => setTimeout(resolve, 350))
         const input = JSON.parse(body.input)
-        const activities = ['Park picnic', 'Coffee and cards', 'Outdoor sketching'].map((title) => ({ title, emoji: '🌿', detail: 'A relaxed activity.', price: Math.min(10, input.maxBudgetPerPerson), tags: ['Outdoors'], slotIndex: mode === 'invalid-slot' ? 999 : 0, location: 'Near campus', rationale: 'Fits the shared interests and budget.' }))
+        const activities = ['Park picnic', 'Coffee and cards', 'Outdoor sketching'].map((title) => ({ title: title + ' 🌳🍎', detail: 'A relaxed activity. ☕️', price: Math.min(10, input.maxBudgetPerPerson), tags: ['Outdoors'], slotIndex: mode === 'invalid-slot' ? 999 : 0, location: 'Near campus 📍', rationale: 'Fits the shared interests and budget. 👍🏽' }))
         return json({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({ activities }) }] }] })
       }
       return nativeFetch(url, options)
@@ -126,9 +126,26 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
   assert.equal(result.session.planMode, 'ai')
   assert.equal(result.session.plans.length, 3)
   assert(result.session.plans.every((plan) => plan.price <= 15 && plan.participantCount === 2 && new Date(plan.start).getTime() > Date.now()))
+  assert.deepEqual(result.session.plans.map(plan => plan.title), ['Park picnic', 'Coffee and cards', 'Outdoor sketching'])
+  assert(result.session.plans.every(plan => plan.emoji === '' && plan.detail === 'A relaxed activity.' && plan.location === 'Near campus' && plan.rationale === 'Fits the shared interests and budget.'))
+  const sharedPlan = result.session.plans[0]
+  const sharedPath = '/api/plans/' + sharedPlan.shareId
+  const publicPlan = await data(await request(sharedPath))
+  assert.equal(publicPlan.plan.title, sharedPlan.title)
+  assert(!JSON.stringify(publicPlan).includes('alice') && !JSON.stringify(publicPlan).includes('preferences'))
+  assert.equal(new URL(sharedPlan.shareUrl).searchParams.get('plan'), sharedPlan.shareId)
+  const download = await request(sharedPath + '/calendar.ics')
+  assert.equal(download.status, 200)
+  assert.match(download.headers.get('content-type'), /text\/calendar/)
+  const calendar = await download.text()
+  assert.match(calendar, /BEGIN:VEVENT/)
+  assert.match(calendar, /DTSTART:\d{8}T\d{6}Z/)
+  assert(!calendar.includes('ATTENDEE') && !calendar.includes('alice'))
+  assert.equal((await request('/api/plans/not-a-real-plan')).status, 404)
   const sent = JSON.parse(await readFile(join(directory, 'request.json'), 'utf8'))
   const input = JSON.parse(sent.input)
   assert.equal(sent.store, false)
+  assert(!('emoji' in sent.text.format.schema.properties.activities.items.properties))
   assert.equal(sent.text.format.type, 'json_schema')
   assert.equal(input.preferences.length, 2)
   assert.equal(input.maxBudgetPerPerson, 15)
@@ -139,6 +156,10 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
   assert.deepEqual(extension.plans, result.session.plans)
   assert.equal(extension.responseCount, 2)
   assert(!('participants' in extension), 'Extension does not receive private preferences')
+
+  await data(await request(extensionPath + '/plans', '', 'POST', {}))
+  assert.notEqual((await data(await request(extensionPath))).plans[0].shareId, sharedPlan.shareId)
+  assert.deepEqual(await data(await request(sharedPath)), publicPlan, 'Old shared plans survive regeneration')
 
   for (const [mode, message] of [['calendar-error', 'Calendar'], ['calendar-notfound', 'sharing access changed'], ['no-shared', 'No shared time'], ['ai-error', 'quota'], ['invalid-slot', 'valid activity']]) {
     await writeFile(join(directory, 'mode'), mode)

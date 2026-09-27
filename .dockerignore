@@ -1,0 +1,9 @@
+.git
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+backend/data
+ios
+*.pkg
+*.log
