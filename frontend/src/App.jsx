@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import './theme.css'
+import huddleFriends from './assets/huddle-friends.png'
 import AvailabilityCalendar, { TimePreferences } from './AvailabilityCalendar'
 import useAvailability from './useAvailability'
 
@@ -174,7 +176,7 @@ function App() {
       <section className={'content ' + (['preferences', 'submitted'].includes(step) ? 'content-wide' : '')} aria-live="polite">
         {step === 'welcome' && (
           <div className="welcome view-card">
-            <div className="sparkle-orbit"><span>✦</span><i>✦</i><b>✦</b></div>
+            <img className="welcome-art" src={huddleFriends} alt="HUDDLE’s hand-drawn crew: three friends ready for a hangout" width="319" height="327" />
             <p className="eyebrow">GOOD PLANS, MADE TOGETHER</p>
             <h1>{onInvitePage ? 'Join the group’s' : 'Make your group chat'}<br /><em>{onInvitePage ? 'hangout plan.' : 'go somewhere.'}</em></h1>
             <p className="subhead">Share your interests, budget, needs, and availability. HUDDLE finds ideas your group can enjoy together.</p>
@@ -185,7 +187,8 @@ function App() {
           </div>
         )}
         {step === 'home' && (
-          <div className="view-card">
+          <div className="view-card home-card">
+            <img className="home-art" src={huddleFriends} alt="The HUDDLE crew" width="319" height="327" />
             <p className="eyebrow">WELCOME, {user?.name?.toUpperCase() || 'FRIEND'}</p>
             <h1>Plan something<br /><em>together.</em></h1>
             <p className="subhead align-left">Start a group session, then invite everyone with a link. Each person adds their own preferences and availability.</p>
@@ -224,7 +227,7 @@ function App() {
             <div className="section-label time-label">WHEN ARE YOU FREE?</div>
             <TimePreferences availability={availability} values={manualAvailability} onChange={setManualAvailability} />
             <div className={'calendar-connect ' + (user?.calendarConnected ? 'connected' : '')}>
-              <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'Checks your visible Google calendars for busy times' : 'Connect securely or use your selected times'}</span></div>
+              <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'Checks your primary calendar and selected calendars you own' : 'Connect securely or use your selected times'}</span></div>
               <button className="connect-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect' : 'Connect'}</button>
             </div>
             {!canSavePreferences && <p className="availability-required">{calendarCheckFailed ? 'Calendar is connected but could not be checked. Select at least one time block you know you can attend to continue.' : 'Select at least one free time block above, or connect Google Calendar, before saving.'}</p>}

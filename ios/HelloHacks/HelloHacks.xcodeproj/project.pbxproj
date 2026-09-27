@@ -10,6 +10,7 @@
 		A10000000000000000000001 /* HelloHacksApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* HelloHacksApp.swift */; };
 		A10000000000000000000002 /* MessagesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* MessagesViewController.swift */; };
 		A10000000000000000000003 /* MessageExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* MessageExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000006 /* huddle-friends.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,6 +43,7 @@
 		A20000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000004 /* MessageExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MessageExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000005 /* HelloHacks.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HelloHacks.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000006 /* huddle-friends.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/huddle-friends.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,6 +102,7 @@
 			children = (
 				A20000000000000000000002 /* MessagesViewController.swift */,
 				A20000000000000000000003 /* Info.plist */,
+				A20000000000000000000006 /* huddle-friends.png */,
 			);
 			path = MessageExtension;
 			sourceTree = "<group>";
@@ -131,6 +134,7 @@
 			buildPhases = (
 				A40000000000000000000002 /* Frameworks */,
 				A70000000000000000000002 /* Sources */,
+				A70000000000000000000006 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -176,6 +180,10 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A70000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000006 /* huddle-friends.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A70000000000000000000001 /* Sources */ = {

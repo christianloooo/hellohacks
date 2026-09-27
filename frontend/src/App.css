@@ -95,7 +95,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 .calendar-day { position: relative; border-left: 1px solid #ffffff18; background: repeating-linear-gradient(to bottom, transparent 0, transparent 29px, #ffffff0d 29px, #ffffff0d 30px); }
 .person-lane { position: absolute; height: 100%; border-right: 1px solid #ffffff08; }
 .unknown-lane { background: repeating-linear-gradient(135deg, #ffffff08 0, #ffffff08 3px, transparent 3px, transparent 10px); }
-.busy-block { position: absolute; z-index: 1; left: 1px; right: 1px; min-height: 3px; overflow: hidden; padding: 3px; border-radius: 4px; color: #15131d; font-size: 9px; }
+.busy-block { position: absolute; z-index: 1; left: 1px; right: 1px; min-height: 1px; box-sizing: border-box; overflow: hidden; padding: 0 3px; border: 0; border-radius: 3px; color: #15131d; font: inherit; font-size: 9px; text-align: left; cursor: pointer; }
 .busy-block strong, .busy-block span { display: block; overflow: hidden; text-overflow: ellipsis; }
 .busy-block:focus, .busy-block:hover { z-index: 3; outline: 2px solid white; }
 .manual-block { position: absolute; left: 1px; right: 1px; border: 1px dashed; opacity: .5; border-radius: 3px; }
@@ -114,3 +114,5 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 .calendar-controls > span { flex: 1; min-width: 180px; font-size: 11px; color: #a8a3b8; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 @media (max-width: 600px) { .content-wide { width: calc(100% - 20px); }.content-wide .view-card { padding: 20px 14px; }.group-calendar { padding: 16px 12px; margin: 20px 0; }.calendar-heading h2 { font-size: 21px; }.week-nav { font-size: 11px; } }
+
+.overlap-block, .overlap-swatch { background-color: #f3ba68; background-image: repeating-linear-gradient(135deg, transparent 0, transparent 5px, #7c400d26 5px, #7c400d26 8px); }

@@ -120,9 +120,11 @@ private struct HuddleExtensionView: View {
     @State private var busy = false
     @State private var errorMessage: String?
 
-    private let ink = Color(red: 0.055, green: 0.065, blue: 0.09)
-    private let panel = Color(red: 0.105, green: 0.12, blue: 0.15)
-    private let purple = Color(red: 0.51, green: 0.43, blue: 1.0)
+    private let ink = Color.white
+    private let pencil = Color(red: 0.20, green: 0.18, blue: 0.17)
+    private let panel = Color(red: 1.0, green: 0.96, blue: 0.89)
+    private let coral = Color(red: 0.71, green: 0.24, blue: 0.27)
+    private let peach = Color(red: 0.97, green: 0.42, blue: 0.43)
 
     private var selectedPlan: HuddlePlan? {
         session?.plans.first(where: { $0.id == selectedPlanID }) ?? session?.plans.first
@@ -144,14 +146,15 @@ private struct HuddleExtensionView: View {
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.orange.opacity(0.95))
+                            .foregroundStyle(Color(red: 0.48, green: 0.27, blue: 0.08))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(16)
             }
         }
-        .preferredColorScheme(.dark)
+        .foregroundStyle(pencil)
+        .preferredColorScheme(.light)
         .task {
             guard !initialCode.isEmpty, session == nil else { return }
             code = initialCode
@@ -175,29 +178,31 @@ private struct HuddleExtensionView: View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(purple)
+                .foregroundStyle(coral)
                 .frame(width: 38, height: 38)
-                .background(purple.opacity(0.16), in: Circle())
-            Text("HUDDLE").font(.headline.bold()).tracking(1)
+                .background(coral.opacity(0.16), in: Circle())
+            Text("HUDDLE").font(.custom("ChalkboardSE-Bold", size: 24)).foregroundStyle(coral).tracking(1)
             Spacer()
             Text("GROUP PLANNER")
                 .font(.system(size: 9, weight: .bold))
                 .tracking(1.2)
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(pencil.opacity(0.45))
         }
     }
 
     private var welcomeView: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundStyle(purple)
+                Image("huddle-friends")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 155)
+                    .accessibilityLabel("The hand-drawn HUDDLE crew")
                 Text("Plan it right here")
-                    .font(.system(size: 23, weight: .bold, design: .rounded))
+                    .font(.custom("ChalkboardSE-Bold", size: 25))
                 Text("Set up preferences on the HUDDLE website. Come back here to generate and share ideas in your chat.")
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.64))
+                    .foregroundStyle(pencil.opacity(0.64))
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
@@ -220,14 +225,14 @@ private struct HuddleExtensionView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(panel, in: Capsule())
-                    .foregroundStyle(.white)
+                    .foregroundStyle(pencil)
             }
             .buttonStyle(.plain)
             .disabled(busy)
 
             Text("Starting a Huddle shares its website invite. Everyone submits their own preferences there; idea generation happens here in Messages.")
                 .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(pencil.opacity(0.42))
                 .lineSpacing(3)
         }
     }
@@ -238,22 +243,25 @@ private struct HuddleExtensionView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("YOUR GROUP")
                         .font(.system(size: 9, weight: .bold)).tracking(1.1)
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(pencil.opacity(0.5))
                     Text("\(session.responseCount) \(session.responseCount == 1 ? "response" : "responses")")
                         .font(.system(size: 13, weight: .semibold))
+                    Text("\(session.participantCount) joined · \(session.responseCount) ready")
+                        .font(.system(size: 10))
+                        .foregroundStyle(pencil.opacity(0.5))
                 }
                 Spacer()
                 Button("Change") { self.session = nil; errorMessage = nil }
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(purple)
+                    .foregroundStyle(coral)
             }
 
             if session.plans.isEmpty {
                 Text(session.generationStatus == "generating" ? "Checking shared availability and generating activities…" : "Ideas generate once everyone who joined saves preferences and availability on the website.")
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(pencil.opacity(0.62))
                 if let warning = session.warning, !warning.isEmpty {
-                    Text(warning).font(.system(size: 10)).foregroundStyle(.orange.opacity(0.9))
+                    Text(warning).font(.system(size: 10)).foregroundStyle(Color(red: 0.48, green: 0.27, blue: 0.08))
                 }
                 actionButton("Generate ideas", icon: "sparkles", disabled: session.generationStatus == "generating") {
                     await generateIdeas()
@@ -261,14 +269,14 @@ private struct HuddleExtensionView: View {
             } else {
                 Text("PICK AN IDEA TO SHARE")
                     .font(.system(size: 9, weight: .bold)).tracking(1.1)
-                    .foregroundStyle(.white.opacity(0.48))
+                    .foregroundStyle(pencil.opacity(0.48))
 
                 ForEach(session.plans) { plan in
                     planCard(plan)
                 }
 
                 if let warning = session.warning, !warning.isEmpty {
-                    Text(warning).font(.system(size: 10)).foregroundStyle(.orange.opacity(0.9))
+                    Text(warning).font(.system(size: 10)).foregroundStyle(Color(red: 0.48, green: 0.27, blue: 0.08))
                 }
 
                 actionButton("Share selected plan", icon: "paperplane.fill", disabled: selectedPlan == nil) {
@@ -279,9 +287,9 @@ private struct HuddleExtensionView: View {
                 Button {
                     Task { await generateIdeas() }
                 } label: {
-                    Text(busy ? "Refreshing…" : "Refresh group")
+                    Label(busy ? "Regenerating…" : "Regenerate ideas", systemImage: "arrow.clockwise")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(pencil.opacity(0.6))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
@@ -296,19 +304,19 @@ private struct HuddleExtensionView: View {
             HStack(alignment: .top, spacing: 10) {
                 Text(plan.emoji).font(.system(size: 23))
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(plan.title).font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                    Text(plan.title).font(.system(size: 13, weight: .bold)).foregroundStyle(pencil)
                     Text("\(plan.time) · about $\(plan.price)/person")
-                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.59))
-                    Text(plan.detail).font(.system(size: 10)).foregroundStyle(.white.opacity(0.72)).fixedSize(horizontal: false, vertical: true)
-                    Text(plan.rationale).font(.system(size: 9)).foregroundStyle(purple.opacity(0.95)).fixedSize(horizontal: false, vertical: true)
+                        .font(.system(size: 10)).foregroundStyle(pencil.opacity(0.59))
+                    Text(plan.detail).font(.system(size: 10)).foregroundStyle(pencil.opacity(0.72)).fixedSize(horizontal: false, vertical: true)
+                    Text(plan.rationale).font(.system(size: 9)).foregroundStyle(coral.opacity(0.95)).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? purple : .white.opacity(0.32))
+                    .foregroundStyle(isSelected ? coral : pencil.opacity(0.32))
             }
             .padding(12)
             .background(panel, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isSelected ? purple : .white.opacity(0.07), lineWidth: isSelected ? 1.5 : 1))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isSelected ? coral : pencil.opacity(0.07), lineWidth: isSelected ? 1.5 : 1))
         }
         .buttonStyle(.plain)
     }
@@ -319,8 +327,9 @@ private struct HuddleExtensionView: View {
                 .font(.system(size: 14, weight: .bold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(LinearGradient(colors: [purple, Color(red: 0.39, green: 0.35, blue: 0.92)], startPoint: .leading, endPoint: .trailing), in: Capsule())
-                .foregroundStyle(.white)
+                .background(peach, in: RoundedRectangle(cornerRadius: 15))
+                .overlay(RoundedRectangle(cornerRadius: 15).stroke(pencil, lineWidth: 1.5))
+                .foregroundStyle(pencil)
         }
         .buttonStyle(.plain)
         .disabled(busy || disabled)
@@ -380,6 +389,7 @@ private struct HuddleExtensionView: View {
 private struct HuddleSession: Decodable {
     let sessionId: String
     let responseCount: Int
+    let participantCount: Int
     let plans: [HuddlePlan]
     let planMode: String?
     let warning: String?
