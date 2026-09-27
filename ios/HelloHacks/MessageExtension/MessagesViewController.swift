@@ -335,7 +335,6 @@ private struct HuddleExtensionView: View {
         let isSelected = selectedPlan?.id == plan.id
         return Button { selectedPlanID = plan.id } label: {
             HStack(alignment: .top, spacing: 10) {
-                Text(plan.emoji).font(.system(size: 23))
                 VStack(alignment: .leading, spacing: 5) {
                     Text(plan.title).font(.system(size: 13, weight: .bold)).foregroundStyle(pencil)
                     Text("\(plan.time) · about $\(plan.price)/person")
@@ -438,7 +437,6 @@ private struct HuddleInvite: Decodable {
 
 private struct HuddlePlan: Decodable, Identifiable {
     let id: Int
-    let emoji: String
     let title: String
     let detail: String
     let time: String

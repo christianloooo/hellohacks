@@ -68,7 +68,6 @@
 .idea-card { padding: 20px; background: var(--paper); color: var(--pencil); border: 1.5px solid #b9afa6; border-radius: 18px 13px 16px 12px; cursor: default; }
 .idea-card:nth-child(3n + 2) { background: var(--sky); }
 .idea-card:nth-child(3n + 3) { background: var(--peach); }
-.idea-emoji { font-size: 30px; }
 .idea-details { gap: 8px; }
 .idea-details strong { color: var(--pencil); font-family: var(--hand); font-size: 21px; }
 .idea-details > span, .idea-details small { color: var(--muted-ink); font-size: 13px; line-height: 1.6; }
@@ -112,7 +111,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 
 .brand-logo { width: 52px; height: 54px; object-fit: contain; border-radius: 8px; background: #fff; }
 .shared-plan-card h1 { overflow-wrap: anywhere; }
-.shared-plan-emoji { display: block; font-size: 44px; margin: 16px 0; }
 .plan-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px 18px; margin: 26px 0; font-size: 14px; line-height: 1.6; }
 .plan-facts dt { font-weight: 700; color: var(--coral-ink); }
 .plan-facts dd { margin: 0; overflow-wrap: anywhere; }

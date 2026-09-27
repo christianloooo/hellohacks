@@ -196,7 +196,6 @@ function App() {
           <div className="view-card shared-plan-card">
             <p className="eyebrow">A PLAN TO LOOK FORWARD TO</p>
             {planError ? <><h1>Plan not found</h1><p role="alert">{planError}</p><a href="/">Go to HUDDLE</a></> : !sharedPlan ? <p role="status">Loading your plan…</p> : <>
-              <span className="shared-plan-emoji" aria-hidden="true">{sharedPlan.emoji}</span>
               <h1>{sharedPlan.title}</h1>
               <p className="subhead">{sharedPlan.detail}</p>
               <dl className="plan-facts">
@@ -220,7 +219,7 @@ function App() {
             <button className="google-button" onClick={signIn}><span className="google-g">G</span> Continue with Google</button>
             <p className="fine-print">Group members can see your unavailable time blocks. Event details stay private.</p>
             {demoEnabled && <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>}
-            <div className="trust-row"><span>✧</span> You choose what to share <b>·</b> No chat-history reading</div>
+            <div className="trust-row">You choose what to share <b>·</b> No chat-history reading</div>
           </div>
         )}
         {step === 'home' && (
@@ -255,7 +254,7 @@ function App() {
             </section>
             <p className="fine-print">Saved preferences and shared available times are sent to OpenAI to suggest activities. Group members see your unavailable blocks. Calendar event details are never read.</p>
             <div className="section-label">WHAT SOUNDS FUN?</div>
-            <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}><span>{activityEmoji(activity)}</span>{activity}</button>)}</div>
+            <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}>{activity}</button>)}</div>
             <div className="budget-heading"><div><div className="section-label">YOUR BUDGET PER PERSON</div><span className="muted">HUDDLE will look for affordable matches</span></div><strong>{'$' + budget}</strong></div>
             <input aria-label="Maximum budget per person" className="budget-slider" type="range" min="10" max="100" step="5" value={budget} onChange={(event) => setBudget(Number(event.target.value))} />
             <div className="range-labels"><span>$10</span><span>$100</span></div>
@@ -285,7 +284,7 @@ function App() {
             {session?.generationStatus === 'generating' && <p className="mode-note" role="status">Checking shared availability and generating activities…</p>}
             {!session?.ready && <p className="mode-note">Waiting for everyone to save preferences and connect Calendar or choose available times.</p>}
             {session?.generationError && <p className="tradeoff-note" role="alert">{session.generationError}</p>}
-            {!!session?.plans.length && <><p className="mode-note">AI suggestions · Estimated costs in CAD · Times in {session.plans[0].timeZone}</p><div className="idea-list">{session.plans.map((plan) => <article className="idea-card" key={plan.id}><span className="idea-emoji">{plan.emoji}</span><div className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · about ${plan.price}/person</span><span>{plan.detail}</span><small>{plan.rationale}</small><button className="secondary-button" onClick={() => copyText(plan.title + ' · ' + plan.time + ' (' + plan.timeZone + ') · about $' + plan.price + '/person · ' + plan.location + (plan.shareUrl ? '\nAdd to calendar: ' + plan.shareUrl : ''), 'Plan and calendar link copied. Share them in your group chat.')}>Copy plan & calendar link</button>{plan.shareUrl && <a className="calendar-plan-link" href={plan.shareUrl}>Add to calendar →</a>}</div></article>)}</div></>}
+            {!!session?.plans.length && <><p className="mode-note">AI suggestions · Estimated costs in CAD · Times in {session.plans[0].timeZone}</p><div className="idea-list">{session.plans.map((plan) => <article className="idea-card" key={plan.id}><div className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · about ${plan.price}/person</span><span>{plan.detail}</span><small>{plan.rationale}</small><button className="secondary-button" onClick={() => copyText(plan.title + ' · ' + plan.time + ' (' + plan.timeZone + ') · about $' + plan.price + '/person · ' + plan.location + (plan.shareUrl ? '\nAdd to calendar: ' + plan.shareUrl : ''), 'Plan and calendar link copied. Share them in your group chat.')}>Copy plan & calendar link</button>{plan.shareUrl && <a className="calendar-plan-link" href={plan.shareUrl}>Add to calendar →</a>}</div></article>)}</div></>}
             {!session?.plans.length && session?.ready && <button className="primary-button" disabled={loading || session?.generationStatus === 'generating'} onClick={generateIdeas}>{loading || session?.generationStatus === 'generating' ? 'Generating…' : 'Generate ideas'}</button>}
             <button className="secondary-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}</button>
             {inviteUrl && <button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link <span>↗</span></button>}
@@ -303,8 +302,5 @@ function CalendarActions({ plan }) {
     <a className="primary-button" href={plan.googleCalendarUrl} target="_blank" rel="noopener noreferrer">Add to Google Calendar ↗</a>
     <a className="secondary-button" href={plan.calendarDownloadUrl}>Apple Calendar / Outlook (.ics) ↓</a>
   </div>
-}
-function activityEmoji(activity) {
-  return ({ 'Food & drinks': '🍜', Games: '🎳', Outdoors: '🌿', Movies: '🎬', 'Live music': '🎵', Coffee: '☕' })[activity]
 }
 export default App
