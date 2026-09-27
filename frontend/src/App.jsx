@@ -1,14 +1,9 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import AvailabilityCalendar, { TimePreferences } from './AvailabilityCalendar'
+import useAvailability from './useAvailability'
 
 const activities = ['Food & drinks', 'Games', 'Outdoors', 'Movies', 'Live music', 'Coffee']
-const timeOptions = [
-  ['saturday-afternoon', 'Saturday afternoon'],
-  ['saturday-evening', 'Saturday evening'],
-  ['sunday-afternoon', 'Sunday afternoon'],
-  ['sunday-evening', 'Sunday evening'],
-  ['friday-evening', 'Friday evening'],
-]
 async function api(path, options = {}) {
   const response = await fetch(path, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } })
   const result = await response.json().catch(() => ({}))
@@ -91,6 +86,9 @@ function App() {
     return () => { cancelled = true; clearTimeout(timer) }
   }, [sessionId, user])
 
+  const availabilityRevision = JSON.stringify(session?.participants.map(person => [person.name, person.calendarConnected, person.preferences?.manualAvailability]))
+  const availability = useAvailability(sessionId, availabilityRevision)
+
   const responseCount = session?.participants.filter((person) => person.preferences).length || 0
   function signIn() {
     const querySession = new URLSearchParams(window.location.search).get('session')
@@ -103,6 +101,7 @@ function App() {
     try {
       const invitedSession = new URLSearchParams(window.location.search).get('session')
       const result = await api('/api/demo/session', { method: 'POST', body: JSON.stringify(invitedSession ? { sessionId: invitedSession } : {}) })
+      localStorage.removeItem('huddle_pending_session')
       setUser(result.user); setSessionId(result.sessionId)
       localStorage.setItem('huddle_active_session', result.sessionId)
       const loaded = await api('/api/sessions/' + result.sessionId + '/join', { method: 'POST', body: '{}' })
@@ -123,9 +122,6 @@ function App() {
   }
   function toggleActivity(activity) {
     setSelectedActivities((current) => current.includes(activity) ? current.filter((item) => item !== activity) : [...current, activity])
-  }
-  function toggleTime(value) {
-    setManualAvailability((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])
   }
   async function savePreferences() {
     setError(''); setLoading(true)
@@ -162,7 +158,7 @@ function App() {
         </a>
         <span className="demo-pill"><i /> GROUP HANGOUT PLANNER</span>
       </header>
-      <section className="content" aria-live="polite">
+      <section className={'content ' + (['preferences', 'submitted'].includes(step) ? 'content-wide' : '')} aria-live="polite">
         {step === 'welcome' && (
           <div className="welcome view-card">
             <div className="sparkle-orbit"><span>✦</span><i>✦</i><b>✦</b></div>
@@ -170,7 +166,7 @@ function App() {
             <h1>{onInvitePage ? 'Join the group’s' : 'Make your group chat'}<br /><em>{onInvitePage ? 'hangout plan.' : 'go somewhere.'}</em></h1>
             <p className="subhead">Share your interests, budget, needs, and availability. HUDDLE finds ideas your group can enjoy together.</p>
             <button className="google-button" onClick={signIn}><span className="google-g">G</span> Continue with Google</button>
-            <p className="fine-print">Calendar access is used only to check free/busy times.</p>
+            <p className="fine-print">Group members can see your unavailable time blocks. Event details stay private.</p>
             <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>
             <div className="trust-row"><span>✧</span> You choose what to share <b>·</b> No chat-history reading</div>
           </div>
@@ -194,7 +190,7 @@ function App() {
             <p className="eyebrow">YOUR GROUP · {responseCount} RESPONDED</p>
             <h1>Add your<br /><em>preferences.</em></h1>
             <p className="subhead">Everyone submits their own choices. HUDDLE compares them for the group.</p>
-            <p className="fine-print">Saved preferences and shared available times are sent to OpenAI to suggest activities. Calendar event details are never read.</p>
+            <p className="fine-print">Saved preferences and shared available times are sent to OpenAI to suggest activities. Group members see your unavailable blocks. Calendar event details are never read.</p>
             <div className="section-label">WHAT SOUNDS FUN?</div>
             <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}><span>{activityEmoji(activity)}</span>{activity}</button>)}</div>
             <div className="budget-heading"><div><div className="section-label">YOUR BUDGET PER PERSON</div><span className="muted">HUDDLE will look for affordable matches</span></div><strong>{'$' + budget}</strong></div>
@@ -203,10 +199,9 @@ function App() {
             <label className="form-label">Preferred area<input className="text-input" value={location} maxLength={80} onChange={(event) => setLocation(event.target.value)} placeholder="Near campus" /></label>
             <label className="form-label">Needs to consider<input className="text-input" value={needs} maxLength={240} onChange={(event) => setNeeds(event.target.value)} placeholder="Food, access, travel, or other needs" /></label>
             <div className="section-label time-label">WHEN ARE YOU FREE?</div>
-            <p className="muted">Choose times manually, or let Google Calendar check free/busy.</p>
-            <div className="time-grid">{timeOptions.map(([value, label]) => <button key={value} className={'time-chip ' + (manualAvailability.includes(value) ? 'active' : '')} onClick={() => toggleTime(value)}>{label}</button>)}</div>
+            <TimePreferences availability={availability} values={manualAvailability} onChange={setManualAvailability} />
             <div className={'calendar-connect ' + (user?.calendarConnected ? 'connected' : '')}>
-              <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'HUDDLE checks free/busy only' : 'Connect securely or use your selected times'}</span></div>
+              <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'Checks your visible Google calendars for busy times' : 'Connect securely or use your selected times'}</span></div>
               <button className="connect-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect' : 'Connect'}</button>
             </div>
             {inviteUrl && <><label className="form-label">Invite friends<input className="text-input" value={inviteUrl} readOnly onFocus={(event) => event.target.select()} /></label><button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link</button></>}
@@ -223,6 +218,7 @@ function App() {
               <strong>{responseCount} of {session?.participants.length || 0} people have saved preferences</strong>
               {session?.participants.map((person, index) => <p key={index}>{person.name}{person.isYou ? ' (you)' : ''} · {person.preferences ? 'Preferences saved' : 'Waiting for preferences'} · {person.calendarConnected ? 'Calendar connected' : person.preferences?.manualAvailability.length ? 'Times selected' : 'Needs availability'}</p>)}
             </div>
+            <AvailabilityCalendar availability={availability} />
             {session?.generationStatus === 'generating' && <p className="mode-note" role="status">Checking shared availability and generating activities…</p>}
             {!session?.ready && <p className="mode-note">Waiting for everyone to save preferences and connect Calendar or choose available times.</p>}
             {session?.generationError && <p className="tradeoff-note" role="alert">{session.generationError}</p>}

@@ -16,14 +16,14 @@ The backend uses Node’s built-in modules. The frontend uses the dependencies a
 
 1. Sign in with Google and create a group on the website, or start a Huddle in the Messages extension.
 2. Copy the group invite and share it with friends. Each friend joins, grants Calendar free/busy access or selects available times, and saves preferences.
-3. Once everyone who has joined is ready, the backend finds common upcoming weekend slots and sends preferences plus those shared slots to OpenAI. A new friend joining or someone updating preferences invalidates old suggestions.
+3. Once everyone who has joined is ready, the backend finds common two-hour slots across all seven days in the next three weeks and sends preferences plus those shared slots to OpenAI. A new friend joining or someone updating preferences invalidates old suggestions.
 4. Three generated activities appear on the website and in Messages. Copy a plan on the website or select and share it from the extension. A failed Calendar or AI request displays an error; it does not produce pretend availability or substitute sample plans.
 
 The backend only knows about people who have joined, so send invites before everyone finishes their preferences. Each group is limited to its joined participants when plans are generated. Generation requests for the same group are deduplicated, and completed suggestions are reused until preferences or membership change.
 
 ## Configure Google Calendar
 
-Google sign-in and Calendar require credentials from a Google Cloud project. Enable the Calendar API, create a web OAuth client, add `http://localhost:3001/auth/google/callback` as an authorized redirect URI, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `backend/.env`. Add participating Google accounts as test users while the OAuth app is in testing. The app requests free/busy access only, and preserves group invites across Google sign-in.
+Google sign-in and Calendar require credentials from a Google Cloud project. Enable the Calendar API, create a web OAuth client, add `http://localhost:3001/auth/google/callback` as an authorized redirect URI, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `backend/.env`. Add participating Google accounts as test users while the OAuth app is in testing. The app requests `calendar.events.freebusy` and `calendar.calendarlist.readonly`, and preserves group invites across Google sign-in. Existing users should reconnect once to grant calendar-list access. It combines busy periods from each participant’s visible, selected Google calendars (including the primary calendar), without requesting event titles or descriptions. Each friend signs in with their own account using the same group invite; use separate browser profiles or private windows for multiple people on one computer.
 
 ## OpenAI activity generation
 
@@ -43,6 +43,6 @@ The extension defaults to local development URLs in `ios/HelloHacks/MessageExten
 
 ## Prototype limits
 
-Groups and preferences are stored in `backend/data/sessions.json`. Login sessions and Google tokens are memory-only; after a backend restart, participants must sign in again to reconnect Calendar. Shared availability checks the next three weeks of weekend windows and the primary Google Calendar. Plan costs are estimates; venue availability, prices, and accessibility details need confirmation.
+Groups and preferences are stored in `backend/data/sessions.json`. Login sessions and Google tokens are memory-only; after a backend restart, participants must sign in again to reconnect Calendar. Shared availability checks the next 21 days, with two-hour planning blocks from 8am to 10pm in the configured time zone. The Generate Ideas screen shows a 24-hour shared calendar, with a color and separate lane for each person. Solid blocks show Google busy periods; outlined blocks mark planning times outside saved preferences. Unknown or failed connections are explicitly flagged. Only authenticated group members can retrieve these availability blocks. Calendar data refreshes every minute or on demand. Plan costs are estimates; venue availability, prices, and accessibility details need confirmation.
 
 The long random invite ID acts as access to group summaries and plans from the Messages extension. Only share it with the intended group. Individual preferences and OAuth credentials are never returned through the extension endpoints.

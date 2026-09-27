@@ -13,6 +13,7 @@ try {
     if (match && !match[2].startsWith('#') && process.env[match[1]] === undefined) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '')
   }
 } catch {}
+const { planningWindow, candidateSlots, selectedSlot, overlaps, mergeBusy } = await import('./availability.mjs')
 const PORT = Number(process.env.PORT || 3001)
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
 const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || FRONTEND_ORIGIN
@@ -22,7 +23,7 @@ const DEMO_MODE = process.env.DEMO_MODE !== 'false'
 const DATA_FILE = join(here, 'data', 'sessions.json')
 const COOKIE = 'huddle_session'
 const STATE_COOKIE = 'huddle_oauth_state'
-const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy'
+const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly'
 const sessions = new Map()
 const loginSessions = new Map()
 const credentialsByUser = new Map()
@@ -66,7 +67,7 @@ function text(value, limit = 180) { return typeof value === 'string' ? value.tri
 function cleanPreferences(input = {}) {
   const interests = Array.isArray(input.interests) ? [...new Set(input.interests.filter((x) => typeof x === 'string').map((x) => text(x, 40)))].slice(0, 8) : []
   const budget = Number(input.budget)
-  const windows = Array.isArray(input.manualAvailability) ? [...new Set(input.manualAvailability.filter((x) => typeof x === 'string' && /^[a-z]+-(morning|afternoon|evening)$/.test(x)))].slice(0, 12) : []
+  const windows = Array.isArray(input.manualAvailability) ? [...new Set(input.manualAvailability.filter((x) => typeof x === 'string' && /^(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)-(?:morning|afternoon|evening)|\d{4}-\d{2}-\d{2}T(?:08|10|12|14|16|18|20):00)$/.test(x)))].slice(0, 147) : []
   return { interests, budget: Number.isFinite(budget) ? Math.max(5, Math.min(500, budget)) : 40, needs: text(input.needs, 240), location: text(input.location, 80) || 'near campus', manualAvailability: windows }
 }
 function requirePlanningSession(id) {
@@ -128,58 +129,73 @@ async function accessToken(userId) {
   item.expiresAt = Date.now() + (token.expires_in || 3600) * 1000
   return item.accessToken
 }
-function zonedParts(date) {
-  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(date).map((part) => [part.type, part.value]))
+const busyCache = new Map()
+const busyJobs = new Map()
+async function busyPeriods(person, refresh = false) {
+  const window = planningWindow()
+  const cached = busyCache.get(person.userId)
+  if (!refresh && cached?.until > Date.now() && cached.start === window.start) return cached.busy
+  if (busyJobs.has(person.userId)) return busyJobs.get(person.userId)
+  const job = fetchBusy(person, window).then(busy => {
+    if (busy !== null) busyCache.set(person.userId, { busy, start: window.start, until: Date.now() + 60000 })
+    return busy
+  }).finally(() => busyJobs.delete(person.userId))
+  busyJobs.set(person.userId, job)
+  return job
 }
-function zonedDate(y, m, d, h) {
-  const target = Date.UTC(y, m - 1, d, h)
-  let ms = target
-  for (let i = 0; i < 3; i++) {
-    const p = zonedParts(new Date(ms))
-    ms += target - Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute))
-  }
-  return new Date(ms)
-}
-function candidateSlots() {
-  const now = new Date()
-  const today = zonedParts(now)
-  const base = Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day))
-  const result = []
-  for (let offset = 0; offset < 22; offset++) {
-    const date = new Date(base + offset * 86400000)
-    const dow = date.getUTCDay()
-    if (![5, 6, 0].includes(dow)) continue
-    const hours = dow === 5 ? [18] : [11, 14, 17]
-    for (const hour of hours) {
-      const start = zonedDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), hour)
-      const end = new Date(start.getTime() + 2 * 3600000)
-      if (start <= now) continue
-      const day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][dow]
-      const period = hour < 12 ? 'morning' : hour < 16 ? 'afternoon' : 'evening'
-      const label = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(start)
-      result.push({ start, end, label, key: day + '-' + period })
-    }
-  }
-  return result
-}
-async function busyPeriods(person) {
+async function fetchBusy(person, window) {
   const token = await accessToken(person.userId)
   if (!token) return null
-  const slots = candidateSlots()
-  if (!slots.length) return []
-  const response = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
-    method: 'POST', signal: AbortSignal.timeout(15000), headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ timeMin: slots[0].start.toISOString(), timeMax: slots[slots.length - 1].end.toISOString(), timeZone: TIME_ZONE, items: [{ id: 'primary' }] }),
-  })
-  const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error?.message || 'Calendar availability request failed.'), { status: 502 })
-  const calendar = result.calendars?.primary
-  if (calendar?.errors?.length || !Array.isArray(calendar?.busy)) {
-    throw Object.assign(new Error('Google Calendar availability could not be retrieved. Reconnect Calendar and grant availability access.'), { status: 502 })
+  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  const credential = credentialsByUser.get(person.userId)
+  let ids = ['primary']
+  if (credential.calendarListGranted) {
+    ids = []
+    let pageToken
+    do {
+      const params = new URLSearchParams({ maxResults: '250', minAccessRole: 'freeBusyReader', ...(pageToken ? { pageToken } : {}) })
+      const response = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?' + params, { headers, signal: AbortSignal.timeout(15000) })
+      const data = await response.json()
+      if (!response.ok) throw new Error('Calendar list could not be loaded. Reconnect Google Calendar.')
+      ids.push(...(data.items || []).filter(c => !c.deleted && !c.hidden && (c.primary || c.selected !== false)).map(c => c.id))
+      pageToken = data.nextPageToken
+    } while (pageToken)
+    ids = [...new Set(ids)]
+    if (!ids.length) ids = ['primary']
   }
-  return calendar.busy
+  const ranges = []
+  for (let offset = 0; offset < ids.length; offset += 50) {
+    const batch = ids.slice(offset, offset + 50)
+    const response = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
+      method: 'POST', signal: AbortSignal.timeout(15000), headers,
+      body: JSON.stringify({ timeMin: window.start, timeMax: window.end, timeZone: TIME_ZONE, items: batch.map(id => ({ id })) }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(response.status === 403 ? 'Google Calendar access was denied. Enable Calendar API and reconnect with availability access.' : 'Google Calendar could not be checked. Reconnect and try again.')
+    for (const id of batch) {
+      const calendar = result.calendars?.[id]
+      if (calendar?.errors?.length || !Array.isArray(calendar?.busy)) throw new Error('One of the Google calendars could not be checked. Check its sharing permissions or reconnect.')
+      ranges.push(...calendar.busy.map(({ start, end }) => ({ start, end })))
+    }
+  }
+  credential.calendarCount = ids.length
+  return mergeBusy(ranges)
 }
-function overlaps(slot, busy) { return busy.some((range) => new Date(range.start) < slot.end && new Date(range.end) > slot.start) }
+async function groupAvailability(session, user, refresh = false) {
+  const window = planningWindow()
+  const people = await Promise.all(session.participants.map(async (person, index) => {
+    const connected = credentialsByUser.has(person.userId)
+    const base = { id: 'person-' + index, name: person.name, isYou: person.userId === user.id, color: `hsl(${(index * 137.508 + 255) % 360} 72% 72%)`, manualAvailability: person.preferences?.manualAvailability || [] }
+    if (!connected) return { ...base, status: base.manualAvailability.length ? 'manual' : 'unknown', busy: [], calendarCount: 0 }
+    try {
+      const busy = await busyPeriods(person, refresh)
+      if (busy === null) throw new Error('Reconnect Google Calendar to refresh availability.')
+      const credential = credentialsByUser.get(person.userId)
+      return { ...base, status: 'connected', busy, calendarCount: credential.calendarCount || 1, needsReconnect: !credential.calendarListGranted }
+    } catch (error) { return { ...base, status: 'error', busy: [], error: error.message } }
+  }))
+  return { ...window, people, updatedAt: new Date().toISOString() }
+}
 
 const generationJobs = new Map()
 function invalidatePlans(session) {
@@ -215,15 +231,15 @@ async function makePlans(session) {
       const busy = await busyPeriods(person)
       if (busy === null) throw new Error('Expired Calendar connection')
       busyByUser.set(person.userId, busy)
-    } catch {
-      throw Object.assign(new Error('A group Calendar could not be checked. Reconnect Google Calendar and try again.'), { status: 409 })
+    } catch (error) {
+      throw Object.assign(new Error(person.name + ': ' + error.message), { status: 409 })
     }
   }))
   const shared = slots.filter((slot) => people.every((person) => {
     const manual = person.preferences.manualAvailability
-    if (manual.length && !manual.includes(slot.key)) return false
+    if (manual.length && !selectedSlot(manual, slot)) return false
     if (busyByUser.has(person.userId)) return !overlaps(slot, busyByUser.get(person.userId))
-    return manual.includes(slot.key)
+    return selectedSlot(manual, slot)
   }))
   if (!shared.length) throw Object.assign(new Error('No shared time was found in the next three weeks. Update your availability and try again.'), { status: 409 })
   const plans = await generateActivities(people, shared.slice(0, 12), TIME_ZONE)
@@ -283,7 +299,7 @@ async function googleStart(req, res, url) {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT_URI,
-    response_type: 'code', scope: GOOGLE_SCOPE, state, access_type: 'offline', prompt: 'consent',
+    response_type: 'code', scope: GOOGLE_SCOPE, state, access_type: 'offline', prompt: 'select_account consent',
   })
   res.writeHead(302, { Location: 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString() })
   res.end()
@@ -319,7 +335,8 @@ async function googleCallback(req, res, url) {
   const grantedScopes = new Set((token.scope || '').split(' '))
   const calendarGranted = ['calendar.events.freebusy', 'calendar.freebusy', 'calendar.readonly', 'calendar'].some((scope) => grantedScopes.has('https://www.googleapis.com/auth/' + scope))
   if (calendarGranted) {
-    credentialsByUser.set(profile.sub, { accessToken: token.access_token, expiresAt: Date.now() + (token.expires_in || 3600) * 1000, refreshToken: token.refresh_token || existing?.refreshToken || null })
+    busyCache.delete(profile.sub)
+    credentialsByUser.set(profile.sub, { calendarListGranted: grantedScopes.has('https://www.googleapis.com/auth/calendar.calendarlist.readonly') || grantedScopes.has('https://www.googleapis.com/auth/calendar.readonly') || grantedScopes.has('https://www.googleapis.com/auth/calendar'), accessToken: token.access_token, expiresAt: Date.now() + (token.expires_in || 3600) * 1000, refreshToken: token.refresh_token || existing?.refreshToken || null })
   }
   for (const session of sessions.values()) {
     if (session.id === pending.sessionId && pending.previousDemoId) {
@@ -356,7 +373,7 @@ const server = createServer(async (req, res) => {
       const user = requireUser(req)
       const busy = await busyPeriods({ userId: user.id })
       if (busy === null) return json(res, 401, { error: 'Connect Google Calendar before requesting availability.' })
-      return json(res, 200, { calendarId: 'primary', timeZone: TIME_ZONE, busy })
+      return json(res, 200, { calendarCount: credentialsByUser.get(user.id)?.calendarCount || 1, timeZone: TIME_ZONE, busy })
     }
     if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, name: 'HUDDLE API' })
     if (req.method === 'GET' && url.pathname === '/api/me') {
@@ -414,7 +431,7 @@ const server = createServer(async (req, res) => {
       await saveSessions()
       return json(res, 201, { sessionId: session.id, inviteUrl: PUBLIC_APP_URL.replace(/\/$/, '') + '/?session=' + encodeURIComponent(session.id) })
     }
-    const match = url.pathname.match(/^\/api\/sessions\/([A-Za-z0-9_-]+)(?:\/(join|preferences|plans|vote))?$/)
+    const match = url.pathname.match(/^\/api\/sessions\/([A-Za-z0-9_-]+)(?:\/(join|preferences|plans|vote|availability))?$/)
     if (match) {
       const session = requirePlanningSession(match[1])
       const user = requireUser(req)
@@ -425,6 +442,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { session: publicSession(session, user) })
       }
       if (!isMember) throw Object.assign(new Error('Join this session before viewing or editing it.'), { status: 403 })
+      if (req.method === 'GET' && action === 'availability') return json(res, 200, await groupAvailability(session, user, url.searchParams.get('refresh') === '1'))
       if (req.method === 'GET' && !action) return json(res, 200, { session: publicSession(session, user) })
       if (req.method === 'PUT' && action === 'preferences') {
         const person = member(session, user)
