@@ -12,6 +12,7 @@
 		A10000000000000000000003 /* MessageExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* MessageExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000006 /* huddle-friends.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006; };
 		A10000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007; };
+		A10000000000000000000008 /* App Assets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +47,7 @@
 		A20000000000000000000005 /* HelloHacks.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HelloHacks.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000006 /* huddle-friends.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/huddle-friends.png"; sourceTree = "<group>"; };
 		A20000000000000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000008 /* App Assets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -95,6 +97,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000001 /* HelloHacksApp.swift */,
+				A20000000000000000000008 /* App Assets */,
 			);
 			path = HelloHacks;
 			sourceTree = "<group>";
@@ -119,6 +122,7 @@
 			buildPhases = (
 				A40000000000000000000001 /* Frameworks */,
 				A70000000000000000000001 /* Sources */,
+				A70000000000000000000008 /* App Resources */,
 				A30000000000000000000001 /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -186,6 +190,7 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		A70000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000006 /* huddle-friends.png in Resources */, A10000000000000000000007 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A70000000000000000000008 /* App Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000008 /* App Assets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -220,9 +225,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7L2S82588R;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_KEY_CFBundleDisplayName = HUDDLE;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -238,9 +244,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7L2S82588R;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_KEY_CFBundleDisplayName = HUDDLE;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -258,7 +265,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7L2S82588R;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MessageExtension/Info.plist;
@@ -278,7 +285,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7L2S82588R;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MessageExtension/Info.plist;
