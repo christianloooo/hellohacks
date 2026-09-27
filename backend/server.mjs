@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generateActivities } from './planner.mjs'
@@ -21,6 +21,7 @@ const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Vancouver'
 const DEMO_MODE = process.env.DEMO_MODE !== 'false'
 const DATA_FILE = join(here, 'data', 'sessions.json')
+const AUTH_FILE = join(here, 'data', 'auth-state.json')
 const COOKIE = 'huddle_session'
 const STATE_COOKIE = 'huddle_oauth_state'
 const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly'
@@ -29,6 +30,7 @@ const loginSessions = new Map()
 const credentialsByUser = new Map()
 const oauthStates = new Map()
 let writeQueue = Promise.resolve()
+let authWriteQueue = Promise.resolve()
 
 function json(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -114,6 +116,38 @@ async function loadSessions() {
   } catch (error) { if (error.code !== 'ENOENT') console.error('Could not load sessions:', error.message) }
 }
 
+// OAuth refresh tokens and login cookies must survive a backend restart. Keep
+// this local-only file private, and never persist short-lived access tokens.
+async function saveAuthState() {
+  authWriteQueue = authWriteQueue.catch(() => {}).then(async () => {
+    await mkdir(dirname(AUTH_FILE), { recursive: true, mode: 0o700 })
+    const state = {
+      loginSessions: [...loginSessions.entries()],
+      credentials: [...credentialsByUser.entries()].map(([userId, item]) => [userId, {
+        refreshToken: item.refreshToken,
+        calendarListGranted: item.calendarListGranted,
+      }]),
+    }
+    const temp = AUTH_FILE + '.tmp'
+    await writeFile(temp, JSON.stringify(state), { mode: 0o600 })
+    await chmod(temp, 0o600)
+    await rename(temp, AUTH_FILE)
+  })
+  await authWriteQueue
+}
+async function loadAuthState() {
+  try {
+    const state = JSON.parse(await readFile(AUTH_FILE, 'utf8'))
+    for (const [id, entry] of state.loginSessions || []) {
+      if (id && entry?.user && Date.now() - entry.createdAt < 7 * 24 * 60 * 60 * 1000) loginSessions.set(id, entry)
+    }
+    for (const [userId, item] of state.credentials || []) {
+      if (userId && item?.refreshToken) credentialsByUser.set(userId, { refreshToken: item.refreshToken, calendarListGranted: Boolean(item.calendarListGranted) })
+    }
+    if (loginSessions.size !== (state.loginSessions || []).length || credentialsByUser.size !== (state.credentials || []).length) await saveAuthState()
+  } catch (error) { if (error.code !== 'ENOENT') console.error('Could not load saved sign-in state:', error.message) }
+}
+
 async function accessToken(userId) {
   const item = credentialsByUser.get(userId)
   if (!item) return null
@@ -127,6 +161,9 @@ async function accessToken(userId) {
   if (!response.ok) throw Object.assign(new Error('Google authorization expired. Reconnect Calendar.'), { status: 401 })
   item.accessToken = token.access_token
   item.expiresAt = Date.now() + (token.expires_in || 3600) * 1000
+  // Token refresh can rotate a refresh token; save only the durable credential.
+  if (token.refresh_token) item.refreshToken = token.refresh_token
+  await saveAuthState()
   return item.accessToken
 }
 const busyCache = new Map()
@@ -134,6 +171,7 @@ const busyJobs = new Map()
 async function busyPeriods(person, refresh = false) {
   const window = planningWindow()
   const cached = busyCache.get(person.userId)
+  if (refresh) busyCache.delete(person.userId)
   if (!refresh && cached?.until > Date.now() && cached.start === window.start) return cached.busy
   if (busyJobs.has(person.userId)) return busyJobs.get(person.userId)
   const job = fetchBusy(person, window).then(busy => {
@@ -143,7 +181,7 @@ async function busyPeriods(person, refresh = false) {
   busyJobs.set(person.userId, job)
   return job
 }
-async function fetchBusy(person, window) {
+async function fetchBusy(person, window, allowPartial = false) {
   const token = await accessToken(person.userId)
   if (!token) return null
   const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
@@ -157,13 +195,16 @@ async function fetchBusy(person, window) {
       const response = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?' + params, { headers, signal: AbortSignal.timeout(15000) })
       const data = await response.json()
       if (!response.ok) throw new Error('Calendar list could not be loaded. Reconnect Google Calendar.')
-      ids.push(...(data.items || []).filter(c => !c.deleted && !c.hidden && (c.primary || c.selected !== false)).map(c => c.id))
+      // CalendarList.selected is optional and defaults to false. Only query the
+      // primary calendar and calendars explicitly selected in the user's UI.
+      ids.push(...(data.items || []).filter(c => !c.deleted && !c.hidden && (c.primary || c.selected === true)).map(c => c.id))
       pageToken = data.nextPageToken
     } while (pageToken)
     ids = [...new Set(ids)]
     if (!ids.length) ids = ['primary']
   }
   const ranges = []
+  let missingCalendar = false
   for (let offset = 0; offset < ids.length; offset += 50) {
     const batch = ids.slice(offset, offset + 50)
     const response = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
@@ -174,11 +215,29 @@ async function fetchBusy(person, window) {
     if (!response.ok) throw new Error(response.status === 403 ? 'Google Calendar access was denied. Enable Calendar API and reconnect with availability access.' : 'Google Calendar could not be checked. Reconnect and try again.')
     for (const id of batch) {
       const calendar = result.calendars?.[id]
-      if (calendar?.errors?.length || !Array.isArray(calendar?.busy)) throw new Error('One of the Google calendars could not be checked. Check its sharing permissions or reconnect.')
+      if (calendar?.errors?.length || !Array.isArray(calendar?.busy)) {
+        const reasons = [...new Set((calendar?.errors || []).map(error => error.reason).filter(Boolean))]
+        if (reasons.includes('notFound')) {
+          if (allowPartial) {
+            missingCalendar = true
+            continue
+          }
+          throw new Error('Google could not find one of the calendars selected for availability. It may have been removed or its sharing access changed. Remove that calendar from this Google account’s calendar list or restore access, then refresh.')
+        }
+        const detail = reasons.length ? ` Google reported: ${reasons.join(', ')}.` : ''
+        throw new Error('One of the Google calendars could not be checked.' + detail + ' Reconnect Calendar or select manual free-time blocks.')
+      }
       ranges.push(...calendar.busy.map(({ start, end }) => ({ start, end })))
     }
   }
   credential.calendarCount = ids.length
+  if (allowPartial && missingCalendar) {
+    return {
+      busy: mergeBusy(ranges),
+      warning: 'Google could not find one of this account’s selected calendars. Busy blocks from the calendars it could check are shown, but availability is incomplete. Remove the missing calendar from this Google account’s calendar list or restore access.',
+    }
+  }
+  if (allowPartial) return { busy: mergeBusy(ranges), warning: null }
   return mergeBusy(ranges)
 }
 async function groupAvailability(session, user, refresh = false) {
@@ -188,10 +247,10 @@ async function groupAvailability(session, user, refresh = false) {
     const base = { id: 'person-' + index, name: person.name, isYou: person.userId === user.id, color: `hsl(${(index * 137.508 + 255) % 360} 72% 72%)`, manualAvailability: person.preferences?.manualAvailability || [] }
     if (!connected) return { ...base, status: base.manualAvailability.length ? 'manual' : 'unknown', busy: [], calendarCount: 0 }
     try {
-      const busy = await busyPeriods(person, refresh)
-      if (busy === null) throw new Error('Reconnect Google Calendar to refresh availability.')
+      const checked = await fetchBusy(person, planningWindow(), true)
+      if (checked === null) throw new Error('Reconnect Google Calendar to refresh availability.')
       const credential = credentialsByUser.get(person.userId)
-      return { ...base, status: 'connected', busy, calendarCount: credential.calendarCount || 1, needsReconnect: !credential.calendarListGranted }
+      return { ...base, status: checked.warning ? 'error' : 'connected', busy: checked.busy, error: checked.warning || undefined, calendarCount: credential.calendarCount || 1, needsReconnect: !credential.calendarListGranted }
     } catch (error) { return { ...base, status: 'error', busy: [], error: error.message } }
   }))
   return { ...window, people, updatedAt: new Date().toISOString() }
@@ -228,10 +287,15 @@ async function makePlans(session) {
   await Promise.all(people.map(async (person) => {
     if (!credentialsByUser.has(person.userId)) return
     try {
-      const busy = await busyPeriods(person)
+      // A new plan must use current Calendar data, not a minute-old free/busy cache.
+      const busy = await busyPeriods(person, true)
       if (busy === null) throw new Error('Expired Calendar connection')
       busyByUser.set(person.userId, busy)
     } catch (error) {
+      // A participant who explicitly selected manual windows can still join the plan
+      // when Google cannot read one of their calendars. Their selected windows become
+      // the availability source for this planning run.
+      if (person.preferences.manualAvailability.length) return
       throw Object.assign(new Error(person.name + ': ' + error.message), { status: 409 })
     }
   }))
@@ -358,12 +422,14 @@ async function googleCallback(req, res, url) {
   const authId = newId(32)
   const user = { id: profile.sub, name: text(profile.name || profile.given_name || 'Google user', 80), email: text(profile.email, 160), provider: 'google' }
   loginSessions.set(authId, { user, createdAt: Date.now() })
+  await saveAuthState()
   cookie(res, COOKIE, authId, 604800)
   cookie(res, STATE_COOKIE, '', 0)
   res.writeHead(302, { Location: returnUrl.href }); res.end()
 }
 
 await loadSessions()
+await loadAuthState()
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost:' + PORT))
   try {
@@ -382,7 +448,10 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/logout') {
       const id = cookies(req)[COOKIE]
-      if (id) loginSessions.delete(id)
+      if (id) {
+        loginSessions.delete(id)
+        await saveAuthState()
+      }
       cookie(res, COOKIE, '', 0)
       return json(res, 200, { ok: true })
     }

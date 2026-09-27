@@ -21,16 +21,17 @@ export function TimePreferences({ availability, values, onChange }) {
     onChange(expanded.includes(slot.key) ? expanded.filter(key => key !== slot.key) : [...expanded, slot.key])
   }
   return <section className="time-preferences" aria-label="Choose available time blocks">
-    <p className="calendar-help">Select two-hour windows on any day. Google busy times are always excluded. With Google connected, leave all unselected to use Calendar availability only.</p>
+    <p className="calendar-help">For connected accounts, only times confirmed free by Google Calendar can be selected. People who do not connect Calendar can choose times manually.</p>
     <WeekNavigation data={data} week={week} setWeek={setWeek} />
     <p className="calendar-zone">{data.timeZone} · Next 21 days · {values.length ? `${data.slots.filter(slot => selected(values, slot)).length} blocks selected` : me?.status === 'connected' ? 'Using Google Calendar' : 'Choose available blocks'}</p>
-    {me?.status === 'error' && <p className="calendar-warning">{me.error} Busy times cannot be confirmed.</p>}
+    {me?.status === 'error' && <p className="calendar-warning">{me.error} HUDDLE will not mark any times free until this calendar can be checked. Reconnect Google Calendar and refresh.</p>}
     <div className="calendar-scroll"><table className="preference-calendar"><caption className="sr-only">Availability for each day, in {data.timeZone}</caption><thead><tr><th scope="col">Time</th>{days.map(day => <th key={day.date} scope="col">{day.label}</th>)}</tr></thead><tbody>{[8, 10, 12, 14, 16, 18, 20].map((hour, row) => <tr key={hour}><th scope="row">{clock(hour)}–{clock(hour + 2)}</th>{days.map(day => {
       const slot = day.slots[row]
       const past = new Date(slot.start) <= new Date()
       const busy = overlaps(slot, me?.busy || [])
+      const calendarUnknown = me?.status === 'error'
       const active = selected(values, slot)
-      return <td key={day.date}><button className={`slot-choice ${active ? 'selected' : ''} ${busy ? 'busy' : ''}`} disabled={past || busy} aria-pressed={active} aria-label={`${day.label}, ${clock(hour)} to ${clock(hour + 2)}${busy ? ', unavailable on Google Calendar' : ''}`} onClick={() => toggle(slot)}>{past ? 'Past' : busy ? 'Busy' : active ? '✓ Free' : 'Select'}</button></td>
+      return <td key={day.date}><button className={`slot-choice ${active ? 'selected' : ''} ${busy ? 'busy' : ''}`} disabled={past || busy || calendarUnknown} aria-pressed={active} aria-label={`${day.label}, ${clock(hour)} to ${clock(hour + 2)}${busy ? ', unavailable on Google Calendar' : calendarUnknown ? ', calendar status unknown' : ''}`} onClick={() => toggle(slot)}>{past ? 'Past' : busy ? 'Busy' : calendarUnknown ? 'Unknown' : active ? '✓ Free' : 'Select'}</button></td>
     })}</tr>)}</tbody></table></div>
     <div className="calendar-controls"><span>Selected times limit when HUDDLE can suggest plans.</span><button className="connect-button" onClick={() => onChange([])}>Clear choices</button><button className="connect-button" disabled={loading} onClick={refresh}>Refresh busy times</button></div>
   </section>

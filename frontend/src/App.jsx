@@ -90,6 +90,10 @@ function App() {
   const availability = useAvailability(sessionId, availabilityRevision)
 
   const responseCount = session?.participants.filter((person) => person.preferences).length || 0
+  const myCalendar = availability.data?.people.find(person => person.isYou)
+  const calendarCheckFailed = user?.calendarConnected && myCalendar?.status === 'error'
+  const canSavePreferences = Boolean(manualAvailability.length || (user?.calendarConnected && !calendarCheckFailed))
+  const inviteIsLocal = inviteUrl.includes('localhost') || inviteUrl.includes('127.0.0.1')
   function signIn() {
     const querySession = new URLSearchParams(window.location.search).get('session')
     const sessionToRestore = querySession || sessionId
@@ -143,6 +147,15 @@ function App() {
     try { await navigator.clipboard.writeText(value); setNotice(success) }
     catch { setError('Clipboard access was blocked. Copy the invite or plan text from the screen.') }
   }
+  async function shareInvite() {
+    if (!inviteUrl) return
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'HUDDLE group invite', text: 'Join our HUDDLE and add your preferences and availability.', url: inviteUrl })
+        setNotice('Invite shared.')
+      } catch (err) { if (err.name !== 'AbortError') setError('Could not open sharing. Copy the invite link instead.') }
+    } else await copyText(inviteUrl, 'Invite link copied. Paste it into your group chat.')
+  }
   async function signOut() {
     await api('/api/logout', { method: 'POST', body: '{}' })
     localStorage.removeItem('huddle_active_session'); localStorage.removeItem('huddle_pending_session')
@@ -190,6 +203,16 @@ function App() {
             <p className="eyebrow">YOUR GROUP · {responseCount} RESPONDED</p>
             <h1>Add your<br /><em>preferences.</em></h1>
             <p className="subhead">Everyone submits their own choices. HUDDLE compares them for the group.</p>
+            <section className="invite-panel" aria-label="Invite group members">
+              <div className="section-label">INVITE YOUR GROUP</div>
+              <p>Invite everyone with this link. Each person opens it, signs in with their own Google account, connects Calendar or selects free time blocks, then saves their preferences. Their name appears here after they join.</p>
+              {inviteUrl && <>
+                <input className="text-input" aria-label="Group invite link" value={inviteUrl} readOnly onFocus={(event) => event.target.select()} />
+                <button className="secondary-button" onClick={shareInvite}>Share invite with friends</button>
+                {inviteIsLocal && <p className="local-invite-warning">This is a localhost link. It works on this computer and its simulator, but your friends’ devices will open their own localhost. To invite them remotely, the website and backend need public HTTPS URLs.</p>}
+              </>}
+              <p className="invite-progress">{session?.participants.length || 1} joined · {responseCount} saved preferences</p>
+            </section>
             <p className="fine-print">Saved preferences and shared available times are sent to OpenAI to suggest activities. Group members see your unavailable blocks. Calendar event details are never read.</p>
             <div className="section-label">WHAT SOUNDS FUN?</div>
             <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}><span>{activityEmoji(activity)}</span>{activity}</button>)}</div>
@@ -204,8 +227,8 @@ function App() {
               <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'Checks your visible Google calendars for busy times' : 'Connect securely or use your selected times'}</span></div>
               <button className="connect-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect' : 'Connect'}</button>
             </div>
-            {inviteUrl && <><label className="form-label">Invite friends<input className="text-input" value={inviteUrl} readOnly onFocus={(event) => event.target.select()} /></label><button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link</button></>}
-            <button className="primary-button" onClick={savePreferences} disabled={loading}>{loading ? 'Saving…' : 'Save my preferences'} <span>→</span></button>
+            {!canSavePreferences && <p className="availability-required">{calendarCheckFailed ? 'Calendar is connected but could not be checked. Select at least one time block you know you can attend to continue.' : 'Select at least one free time block above, or connect Google Calendar, before saving.'}</p>}
+            <button className="primary-button" onClick={savePreferences} disabled={loading || !canSavePreferences}>{loading ? 'Saving…' : 'Save my preferences'} <span>→</span></button>
           </div>
         )}
         {step === 'submitted' && (

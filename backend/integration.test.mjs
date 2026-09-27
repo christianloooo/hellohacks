@@ -11,7 +11,7 @@ import { once } from 'node:events'
 test('Google login, group invites, shared availability, and AI suggestions', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'huddle-integration-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
-  for (const filename of ['server.mjs', 'planner.mjs']) await copyFile(new URL(filename, import.meta.url), join(directory, filename))
+  for (const filename of ['server.mjs', 'planner.mjs', 'availability.mjs']) await copyFile(new URL(filename, import.meta.url), join(directory, filename))
   await writeFile(join(directory, 'providers.mjs'), `
     import { readFile, writeFile, appendFile } from 'node:fs/promises'
     const nativeFetch = globalThis.fetch
@@ -21,16 +21,22 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
       const mode = await readFile(new URL('./mode', import.meta.url), 'utf8').catch(() => '')
       if (address === 'https://oauth2.googleapis.com/token') {
         const person = new URLSearchParams(options.body).get('code') || 'refreshed'
-        return json({ access_token: 'test-' + person, refresh_token: 'refresh-' + person, expires_in: 3600, scope: 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy' })
+        return json({ access_token: 'test-' + person, refresh_token: 'refresh-' + person, expires_in: 3600, scope: 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly' })
       }
       if (address === 'https://www.googleapis.com/oauth2/v3/userinfo') {
         const sub = options.headers.Authorization.replace('Bearer test-', '')
         return json({ sub, name: sub, email: sub + '@example.test' })
       }
+      if (address.startsWith('https://www.googleapis.com/calendar/v3/users/me/calendarList?')) {
+        const sub = options.headers.Authorization.replace('Bearer test-', '')
+        return json({ items: [{ id: sub + '-calendar', primary: true, selected: true }, { id: sub + '-shared', selected: true }] })
+      }
       if (address === 'https://www.googleapis.com/calendar/v3/freeBusy') {
         if (mode === 'calendar-error') return json({ error: { message: 'Calendar API unavailable' } }, 403)
         const body = JSON.parse(options.body)
-        return json({ calendars: { primary: { busy: mode === 'no-shared' ? [{ start: body.timeMin, end: body.timeMax }] : [] } } })
+        const sub = options.headers.Authorization.replace('Bearer test-', '')
+        const offset = sub === 'alice' ? 10 : 12
+        return json({ calendars: Object.fromEntries(body.items.map(({ id }) => [id, mode === 'calendar-notfound' && id.endsWith('-shared') ? { errors: [{ domain: 'global', reason: 'notFound' }] } : { busy: mode === 'no-shared' ? [{ start: body.timeMin, end: body.timeMax }] : id.endsWith('-shared') ? [] : [{ start: new Date(Date.parse(body.timeMin) + offset * 3600000).toISOString(), end: new Date(Date.parse(body.timeMin) + (offset + 2) * 3600000).toISOString() }] }])) })
       }
       if (address === 'https://api.openai.com/v1/responses') {
         const body = JSON.parse(options.body)
@@ -101,12 +107,20 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
   }
   const alice = await login('alice')
   const bob = await login('bob')
+  const savedAuth = JSON.parse(await readFile(join(directory, 'data', 'auth-state.json'), 'utf8'))
+  assert.equal(savedAuth.credentials.length, 2, 'Both Google accounts are saved independently')
+  assert(savedAuth.credentials.every(([, credential]) => credential.refreshToken && !('accessToken' in credential)), 'Only durable refresh tokens are persisted')
+  assert.equal(savedAuth.loginSessions.length, 2, 'Each browser login session is persisted')
   await data(await request(path + '/join', alice, 'POST', {}))
   await data(await request(path + '/join', bob, 'POST', {}))
   const preferences = { interests: ['Outdoors'], budget: 25, needs: 'Prefer a quiet place', location: 'Near campus', manualAvailability: ['saturday-afternoon'] }
   await data(await request(path + '/preferences', alice, 'PUT', preferences))
   assert.equal((await request(path + '/plans', alice, 'POST', {})).status, 409, 'Unsubmitted friends block generation')
   await data(await request(path + '/preferences', bob, 'PUT', { ...preferences, budget: 15 }))
+  const groupCalendar = await data(await request(path + '/availability', alice))
+  assert.equal(groupCalendar.people.length, 2)
+  assert(groupCalendar.people.every(person => person.status === 'connected' && person.busy.length === 1), 'Each participant has separate, verified Calendar busy blocks')
+  assert.notDeepEqual(groupCalendar.people[0].busy, groupCalendar.people[1].busy, 'Busy blocks are read using each participant’s own Google account')
   const result = await data(await request(path + '/plans', alice, 'POST', {}))
   assert.equal(result.session.planMode, 'ai')
   assert.equal(result.session.plans.length, 3)
@@ -125,10 +139,18 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
   assert.equal(extension.responseCount, 2)
   assert(!('participants' in extension), 'Extension does not receive private preferences')
 
-  for (const [mode, message] of [['calendar-error', 'Calendar'], ['no-shared', 'No shared time'], ['ai-error', 'quota'], ['invalid-slot', 'valid activity']]) {
+  for (const [mode, message] of [['calendar-error', 'Calendar'], ['calendar-notfound', 'sharing access changed'], ['no-shared', 'No shared time'], ['ai-error', 'quota'], ['invalid-slot', 'valid activity']]) {
     await writeFile(join(directory, 'mode'), mode)
-    await data(await request(path + '/preferences', bob, 'PUT', preferences))
-    const failure = await data(await request(path + '/plans', alice, 'POST', {}), 502)
+    const testPreferences = mode === 'calendar-error' ? { ...preferences, manualAvailability: [] } : preferences
+    if (mode === 'calendar-error') await data(await request(path + '/preferences', alice, 'PUT', testPreferences))
+    await data(await request(path + '/preferences', bob, 'PUT', testPreferences))
+    const currentAvailability = await data(await request(path + '/availability?refresh=1', alice))
+    if (mode === 'calendar-notfound') {
+      assert(currentAvailability.people.every(person => person.status === 'error' && person.busy.length === 1), 'Verified primary busy blocks remain visible when a secondary calendar is missing')
+    }
+    const failureResponse = await request(path + '/plans', alice, 'POST', {})
+    assert.equal(failureResponse.status, 502, `${mode} should fail generation`)
+    const failure = await failureResponse.json()
     assert(failure.error.includes(message), failure.error)
     assert.equal((await data(await request(extensionPath))).plans.length, 0, 'Failures never masquerade as valid plans')
   }
