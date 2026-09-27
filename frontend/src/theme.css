@@ -128,6 +128,12 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .brand { flex-shrink: 0; }
 .view-card h1, .subhead, .calendar-help, .calendar-warning { overflow-wrap: anywhere; }
 .mobile-time-picker { display: none; }
+.messages-embed .topbar, .messages-embed .footer, .messages-embed .invite-panel { display: none; }
+.messages-embed .content { width: 100%; padding: 0 0 24px; }
+.messages-embed .view-card { border: 0; box-shadow: none; border-radius: 0; padding: 16px; }
+.messages-embed .welcome-art { width: 110px; }
+.messages-embed .view-card h1 { font-size: 28px; }
+.messages-embed .toast { bottom: 12px; }
 @media (max-width: 600px) {
   .topbar { height: auto; min-height: 72px; flex-wrap: wrap; gap: 10px; padding: 12px 0; }
   .topbar .demo-pill { max-width: 100%; }

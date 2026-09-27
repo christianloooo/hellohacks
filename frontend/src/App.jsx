@@ -13,6 +13,7 @@ async function api(path, options = {}) {
   return result
 }
 function App() {
+  const [inMessages] = useState(() => new URLSearchParams(window.location.search).get('embed') === 'messages')
   const [sharedPlanId] = useState(() => new URLSearchParams(window.location.search).get('plan'))
   const [sharedPlan, setSharedPlan] = useState(null)
   const [planError, setPlanError] = useState('')
@@ -71,10 +72,10 @@ function App() {
             setManualAvailability(preferences.manualAvailability); setNeeds(preferences.needs); setLocation(preferences.location)
           }
           const url = new URL(window.location.href)
-          url.searchParams.delete('session')
+          if (!inMessages) url.searchParams.delete('session')
           history.replaceState({}, '', url.pathname + url.search)
           localStorage.removeItem('huddle_pending_session')
-          setStep(preferences ? 'submitted' : 'preferences')
+          setStep(inMessages || !preferences ? 'preferences' : 'submitted')
         } else setStep('home')
       } catch (err) {
         localStorage.removeItem('huddle_active_session'); localStorage.removeItem('huddle_pending_session')
@@ -89,7 +90,7 @@ function App() {
     }
     restore()
     return () => { cancelled = true }
-  }, [sharedPlanId])
+  }, [sharedPlanId, inMessages])
 
   useEffect(() => {
     if (!sessionId || !user) return
@@ -151,7 +152,9 @@ function App() {
     setError(''); setLoading(true)
     try {
       const result = await api('/api/sessions/' + sessionId + '/preferences', { method: 'PUT', body: JSON.stringify({ interests: selectedActivities, budget, needs, location, manualAvailability }) })
-      setSession(result.session); setNotice('Your preferences are saved. Ideas generate when everyone who joined is ready.'); setStep('submitted')
+      setSession(result.session); setNotice('Your preferences are saved. Ideas generate when everyone who joined is ready.')
+      if (inMessages) window.webkit?.messageHandlers?.huddle?.postMessage({ type: 'preferences-saved', sessionId })
+      else setStep('submitted')
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -184,7 +187,7 @@ function App() {
   const onInvitePage = new URLSearchParams(window.location.search).has('session')
 
   return (
-    <main className="app-shell">
+    <main className={'app-shell' + (inMessages ? ' messages-embed' : '')}>
       <header className="topbar">
         <a className="brand" href="/" onClick={(event) => { if (sharedPlanId) return; event.preventDefault(); setStep(user ? 'home' : 'welcome') }}>
           <img className="brand-logo" src={huddleFriends} alt="" width="52" height="54" /><span>HUDDLE</span>
@@ -216,6 +219,7 @@ function App() {
             <p className="eyebrow">GOOD PLANS, MADE TOGETHER</p>
             <h1>{onInvitePage ? 'Join the group’s' : 'Make your group chat'}<br /><em>{onInvitePage ? 'hangout plan.' : 'go somewhere.'}</em></h1>
             <p className="subhead">Share your interests, budget, needs, and availability. HUDDLE finds ideas your group can enjoy together.</p>
+            {inMessages && <p className="fine-print">Sign in once to add your preferences here in Messages.</p>}
             <button className="google-button" onClick={signIn}><span className="google-g">G</span> Continue with Google</button>
             <p className="fine-print">Group members can see your unavailable time blocks. Event details stay private.</p>
             {demoEnabled && <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>}
@@ -238,7 +242,7 @@ function App() {
         )}
         {step === 'preferences' && (
           <div className="preferences view-card">
-            <button className="back-link" onClick={() => setStep('home')}>← Back</button>
+            {!inMessages && <button className="back-link" onClick={() => setStep('home')}>← Back</button>}
             <p className="eyebrow">YOUR GROUP · {responseCount} RESPONDED</p>
             <h1>Add your<br /><em>preferences.</em></h1>
             <p className="subhead">Everyone submits their own choices. HUDDLE compares them for the group.</p>
@@ -268,6 +272,7 @@ function App() {
             </div>
             {!canSavePreferences && <p className="availability-required">{calendarCheckFailed ? 'Calendar is connected but could not be checked. Select at least one time block you know you can attend to continue.' : 'Select at least one free time block above, or connect Google Calendar, before saving.'}</p>}
             <button className="primary-button" onClick={savePreferences} disabled={loading || !canSavePreferences}>{loading ? 'Saving…' : 'Save my preferences'} <span>→</span></button>
+            {inMessages && <button className="demo-link" onClick={signOut}>Sign out of {user?.name || 'Google'}</button>}
           </div>
         )}
         {step === 'submitted' && (
