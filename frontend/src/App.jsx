@@ -33,11 +33,13 @@ function App() {
   useEffect(() => {
     let cancelled = false
     async function restore() {
+      let authenticatedUser = null
       try {
         const query = new URLSearchParams(window.location.search)
         if (query.get('auth') === 'cancelled') setNotice('Google connection was cancelled. You can try again or choose times manually.')
         const { user: signedInUser } = await api('/api/me')
         if (cancelled || !signedInUser) return
+        authenticatedUser = signedInUser
         setUser(signedInUser)
         const querySession = new URLSearchParams(window.location.search).get('session')
         const pendingSession = querySession || localStorage.getItem('huddle_pending_session') || localStorage.getItem('huddle_active_session')
@@ -61,7 +63,13 @@ function App() {
         } else setStep('home')
       } catch (err) {
         localStorage.removeItem('huddle_active_session'); localStorage.removeItem('huddle_pending_session')
-        if (!cancelled) setError(err.message)
+        if (!cancelled && authenticatedUser && err.message.includes('Planning session not found')) {
+          setSession(null); setSessionId(''); setStep('home')
+          const url = new URL(window.location.href)
+          url.searchParams.delete('session')
+          history.replaceState({}, '', url.pathname + url.search)
+          setNotice('You’re signed in, but that group invite is no longer valid. Ask for a fresh invite or create a new group plan.')
+        } else if (!cancelled) setError(err.message)
       }
     }
     restore()
