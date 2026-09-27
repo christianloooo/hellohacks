@@ -11,7 +11,7 @@ import { once } from 'node:events'
 test('Google login, group invites, shared availability, and AI suggestions', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'huddle-integration-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
-  for (const filename of ['server.mjs', 'planner.mjs', 'availability.mjs']) await copyFile(new URL(filename, import.meta.url), join(directory, filename))
+  for (const filename of ['server.mjs', 'planner.mjs', 'availability.mjs', 'calendar.mjs']) await copyFile(new URL(filename, import.meta.url), join(directory, filename))
   await writeFile(join(directory, 'providers.mjs'), `
     import { readFile, writeFile, appendFile } from 'node:fs/promises'
     const nativeFetch = globalThis.fetch
@@ -126,6 +126,20 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
   assert.equal(result.session.planMode, 'ai')
   assert.equal(result.session.plans.length, 3)
   assert(result.session.plans.every((plan) => plan.price <= 15 && plan.participantCount === 2 && new Date(plan.start).getTime() > Date.now()))
+  const sharedPlan = result.session.plans[0]
+  const sharedPath = '/api/plans/' + sharedPlan.shareId
+  const publicPlan = await data(await request(sharedPath))
+  assert.equal(publicPlan.plan.title, sharedPlan.title)
+  assert(!JSON.stringify(publicPlan).includes('alice') && !JSON.stringify(publicPlan).includes('preferences'))
+  assert.equal(new URL(sharedPlan.shareUrl).searchParams.get('plan'), sharedPlan.shareId)
+  const download = await request(sharedPath + '/calendar.ics')
+  assert.equal(download.status, 200)
+  assert.match(download.headers.get('content-type'), /text\/calendar/)
+  const calendar = await download.text()
+  assert.match(calendar, /BEGIN:VEVENT/)
+  assert.match(calendar, /DTSTART:\d{8}T\d{6}Z/)
+  assert(!calendar.includes('ATTENDEE') && !calendar.includes('alice'))
+  assert.equal((await request('/api/plans/not-a-real-plan')).status, 404)
   const sent = JSON.parse(await readFile(join(directory, 'request.json'), 'utf8'))
   const input = JSON.parse(sent.input)
   assert.equal(sent.store, false)
@@ -139,6 +153,10 @@ test('Google login, group invites, shared availability, and AI suggestions', asy
   assert.deepEqual(extension.plans, result.session.plans)
   assert.equal(extension.responseCount, 2)
   assert(!('participants' in extension), 'Extension does not receive private preferences')
+
+  await data(await request(extensionPath + '/plans', '', 'POST', {}))
+  assert.notEqual((await data(await request(extensionPath))).plans[0].shareId, sharedPlan.shareId)
+  assert.deepEqual(await data(await request(sharedPath)), publicPlan, 'Old shared plans survive regeneration')
 
   for (const [mode, message] of [['calendar-error', 'Calendar'], ['calendar-notfound', 'sharing access changed'], ['no-shared', 'No shared time'], ['ai-error', 'quota'], ['invalid-slot', 'valid activity']]) {
     await writeFile(join(directory, 'mode'), mode)

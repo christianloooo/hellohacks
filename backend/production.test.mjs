@@ -15,6 +15,11 @@ test('production serves the website, protects private files, and keeps public in
   await writeFile(join(staticDir, 'index.html'), '<!doctype html><h1>HUDDLE</h1>')
   await writeFile(join(staticDir, 'assets', 'app-123.js'), 'console.log("huddle")')
   await writeFile(join(directory, '.env'), 'PRIVATE_TEST_VALUE')
+  await mkdir(dataDir)
+  await writeFile(join(dataDir, 'sessions.json'), JSON.stringify([{ id: 'old-session', participants: [], plans: [
+    { id: 0, title: 'Picnic', detail: 'Bring snacks.', location: 'Campus', price: 10, emoji: '🌿',
+      start: '2026-11-01T18:00:00Z', end: '2026-11-01T20:00:00Z', timeZone: 'America/Vancouver', time: 'Sunday, 10 AM' },
+  ] }]))
   let child
   async function stop() {
     if (child && child.exitCode === null) { child.kill(); await once(child, 'exit') }
@@ -58,9 +63,14 @@ test('production serves the website, protects private files, and keeps public in
   const canonical = new URL(authStart.headers.get('location'))
   assert.equal(canonical.origin, 'https://huddled.example.test')
   const invite = await (await request('/api/sessions/invite', { method: 'POST' })).json()
+  const migrated = await (await request('/api/extension/sessions/old-session')).json()
+  const calendarPath = new URL(migrated.plans[0].calendarDownloadUrl).pathname
+  const calendarBeforeRestart = await (await request(calendarPath)).text()
+  assert.match(calendarBeforeRestart, /SUMMARY:Picnic/)
   assert.equal(new URL(invite.inviteUrl).origin, 'https://huddled.example.test')
   assert.match(await readFile(join(dataDir, 'sessions.json'), 'utf8'), new RegExp(invite.sessionId))
   await stop()
   base = await start()
+  assert.equal(await (await request(calendarPath)).text(), calendarBeforeRestart, 'Migrated calendar links persist across restarts')
   assert.equal((await request('/api/extension/sessions/' + invite.sessionId)).status, 200)
 })

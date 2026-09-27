@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generateActivities } from './planner.mjs'
+import { calendarLinks, calendarFile } from './calendar.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 try {
@@ -29,6 +30,7 @@ const COOKIE = 'huddle_session'
 const STATE_COOKIE = 'huddle_oauth_state'
 const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly'
 const sessions = new Map()
+const sharedPlans = new Map()
 const loginSessions = new Map()
 const credentialsByUser = new Map()
 const oauthStates = new Map()
@@ -90,7 +92,23 @@ function member(session, user) {
   return person
 }
 function publicSession(session, user) {
-  return { id: session.id, createdAt: session.createdAt, inviteUrl: inviteUrl(session.id), participants: session.participants.map(({ userId, ...person }) => ({ ...person, calendarConnected: credentialsByUser.has(userId), isYou: userId === user.id })), plans: session.plans || [], votes: session.votes || {}, planMode: session.planMode || null, generationStatus: session.generationStatus || 'waiting', generationError: session.generationError || null, ...readiness(session) }
+  return { id: session.id, createdAt: session.createdAt, inviteUrl: inviteUrl(session.id), participants: session.participants.map(({ userId, ...person }) => ({ ...person, calendarConnected: credentialsByUser.has(userId), isYou: userId === user.id })), plans: plansWithLinks(session), votes: session.votes || {}, planMode: session.planMode || null, generationStatus: session.generationStatus || 'waiting', generationError: session.generationError || null, ...readiness(session) }
+}
+function plansWithLinks(session) {
+  return (session.plans || []).map(plan => ({ ...plan, ...(plan.shareId ? calendarLinks(plan, PUBLIC_APP_URL) : {}) }))
+}
+function snapshotPlans(session) {
+  session.sharedPlans ||= []
+  for (const plan of session.plans || []) {
+    if (!Number.isFinite(Date.parse(plan.start)) || !Number.isFinite(Date.parse(plan.end)) || Date.parse(plan.end) <= Date.parse(plan.start)) continue
+    plan.shareId ||= newId()
+    if (!sharedPlans.has(plan.shareId)) {
+      const { shareId, title, detail, location, price, start, end, time, timeZone, emoji } = plan
+      const snapshot = { shareId, title, detail, location, price, start, end, time, timeZone, emoji, sharedAt: new Date().toISOString() }
+      session.sharedPlans.push(snapshot)
+      sharedPlans.set(shareId, snapshot)
+    }
+  }
 }
 function inviteUrl(id) { return PUBLIC_APP_URL.replace(/\/$/, '') + '/?session=' + encodeURIComponent(id) }
 function createSession(user, extra = []) {
@@ -115,6 +133,8 @@ async function loadSessions() {
         entry.generationError = 'The server restarted while generating. Reconnect Calendar and try again.'
       }
       sessions.set(entry.id, entry)
+      for (const plan of entry.sharedPlans || []) sharedPlans.set(plan.shareId, plan)
+      snapshotPlans(entry)
     }
   } catch (error) { if (error.code !== 'ENOENT') console.error('Could not load sessions:', error.message) }
 }
@@ -277,7 +297,7 @@ function readiness(session) {
 function extensionSession(session) {
   return {
     sessionId: session.id, responseCount: session.participants.filter((person) => person.preferences).length,
-    participantCount: session.participants.length, plans: session.plans || [], planMode: session.planMode || null,
+    participantCount: session.participants.length, plans: plansWithLinks(session), planMode: session.planMode || null,
     generationStatus: session.generationStatus || 'waiting',
     warning: session.generationError || (!readiness(session).ready ? 'Waiting for everyone to save preferences and connect Calendar or choose available times.' : null),
   }
@@ -313,6 +333,7 @@ async function makePlans(session) {
   const plans = await generateActivities(people, shared.slice(0, 12), TIME_ZONE)
   if ((session.revision || 0) !== revision) return
   session.plans = plans
+  snapshotPlans(session)
   session.planMode = 'ai'
   session.generationStatus = 'ready'
   session.generationError = null
@@ -464,10 +485,22 @@ async function serveFrontend(req, res, url) {
 }
 
 await loadSessions()
+// Persist migrated calendar links for existing ideas before serving them.
+if (sessions.size) await saveSessions()
 await loadAuthState()
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://' + (req.headers.host || 'localhost:' + PORT))
   try {
+    const calendarMatch = url.pathname.match(/^\/api\/plans\/([A-Za-z0-9_-]+)(\/calendar\.ics)?$/)
+    if (req.method === 'GET' && calendarMatch) {
+      // An unguessable shared link grants access only to this plan's event details.
+      const plan = sharedPlans.get(calendarMatch[1])
+      if (!plan) return json(res, 404, { error: 'This plan link was not found. Ask your group for a new link.' })
+      if (!calendarMatch[2]) return json(res, 200, { plan: { ...plan, ...calendarLinks(plan, PUBLIC_APP_URL) } })
+      res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="huddle-plan.ics"', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+      return res.end(calendarFile(plan, PUBLIC_APP_URL))
+    }
     if (req.method === 'GET' && url.pathname === '/auth/google') return await googleStart(req, res, url)
     if (req.method === 'GET' && url.pathname === '/auth/google/callback') return await googleCallback(req, res, url)
     if (req.method === 'GET' && url.pathname === '/api/calendar/freebusy') {

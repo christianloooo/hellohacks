@@ -62,3 +62,16 @@ npm test
 For a local production smoke check after building, run the backend with
 `NODE_ENV=production`, a temporary `DATA_DIR`, and a configured public origin.
 Production cookies require HTTPS for real browser sign-in.
+
+## Shared calendar plans
+
+Generated ideas include an unguessable `shareUrl`. Its page is accessible without
+sign-in and offers a prefilled Google Calendar event and an `.ics` download for
+Apple Calendar or Outlook. Each person reviews and saves their own event; HUDDLE
+does not write directly to anyone's calendar. The link contains only that plan's
+event details, not participant preferences or free/busy data.
+
+Plan snapshots live in the existing `/data/sessions.json` file and retain their
+original event details across regeneration and restarts. Existing generated
+plans receive calendar links on the next deployment. Rebuild the Messages app
+to pick up its new icon and calendar sharing actions.
