@@ -12,6 +12,7 @@ function WeekNavigation({ data, week, setWeek }) {
 
 export function TimePreferences({ availability, values, onChange }) {
   const [week, setWeek] = useState(0)
+  const [dayOffset, setDayOffset] = useState(0)
   const { data, error, loading, refresh } = availability
   if (!data) return <p className="calendar-status" role="status">{error || 'Loading time blocks…'}{error && <button className="connect-button" onClick={refresh}>Retry</button>}</p>
   const me = data.people.find(person => person.isYou)
@@ -21,19 +22,28 @@ export function TimePreferences({ availability, values, onChange }) {
     const expanded = data.slots.filter(s => selected(values, s)).map(s => s.key)
     onChange(expanded.includes(slot.key) ? expanded.filter(key => key !== slot.key) : [...expanded, slot.key])
   }
+  const mobileDay = days[dayOffset] || days[0]
+  function slotButton(day, slot, showTime = false) {
+    const past = new Date(slot.start) <= new Date()
+    const busy = overlaps(slot, me?.busy || [])
+    const calendarUnknown = me?.status === 'error'
+    const active = selected(values, slot)
+    const label = past ? 'Past' : busy ? 'Busy' : calendarUnknown ? 'Unknown' : active ? 'Selected' : 'Select'
+    return <button type="button" className={`slot-choice ${active ? 'selected' : ''} ${busy ? 'busy' : ''}`} disabled={past || busy || calendarUnknown} aria-pressed={active} aria-label={`${day.label}, ${clock(slot.hour)} to ${clock(slot.hour + 2)}${busy ? ', unavailable on Google Calendar' : calendarUnknown ? ', calendar status unknown' : ''}`} onClick={() => toggle(slot)}>{showTime && <strong>{clock(slot.hour)}–{clock(slot.hour + 2)}</strong>}<span>{label}</span></button>
+  }
   return <section className="time-preferences" aria-label="Choose available time blocks">
     <p className="calendar-help">For connected accounts, only times confirmed free by Google Calendar can be selected. People who do not connect Calendar can choose times manually.</p>
     <WeekNavigation data={data} week={week} setWeek={setWeek} />
     <p className="calendar-zone">{data.timeZone} · Next 21 days · {values.length ? `${data.slots.filter(slot => selected(values, slot)).length} blocks selected` : me?.status === 'connected' ? 'Using Google Calendar' : 'Choose available blocks'}</p>
     {me?.status === 'error' && <p className="calendar-warning">{me.error} HUDDLE will not mark any times free until this calendar can be checked. Reconnect Google Calendar and refresh.</p>}
-    <div className="calendar-scroll"><table className="preference-calendar"><caption className="sr-only">Availability for each day, in {data.timeZone}</caption><thead><tr><th scope="col">Time</th>{days.map(day => <th key={day.date} scope="col">{day.label}</th>)}</tr></thead><tbody>{[8, 10, 12, 14, 16, 18, 20].map((hour, row) => <tr key={hour}><th scope="row">{clock(hour)}–{clock(hour + 2)}</th>{days.map(day => {
-      const slot = day.slots[row]
-      const past = new Date(slot.start) <= new Date()
-      const busy = overlaps(slot, me?.busy || [])
-      const calendarUnknown = me?.status === 'error'
-      const active = selected(values, slot)
-      return <td key={day.date}><button className={`slot-choice ${active ? 'selected' : ''} ${busy ? 'busy' : ''}`} disabled={past || busy || calendarUnknown} aria-pressed={active} aria-label={`${day.label}, ${clock(hour)} to ${clock(hour + 2)}${busy ? ', unavailable on Google Calendar' : calendarUnknown ? ', calendar status unknown' : ''}`} onClick={() => toggle(slot)}>{past ? 'Past' : busy ? 'Busy' : calendarUnknown ? 'Unknown' : active ? '✓ Free' : 'Select'}</button></td>
-    })}</tr>)}</tbody></table></div>
+    <div className="mobile-time-picker">
+      <label htmlFor="availability-day">Choose a day</label>
+      <select id="availability-day" value={String(days.indexOf(mobileDay))} onChange={event => setDayOffset(Number(event.target.value))}>
+        {days.map((day, index) => <option key={day.date} value={index}>{day.label}</option>)}
+      </select>
+      <div className="mobile-time-slots">{mobileDay?.slots.map(slot => <div key={slot.key}>{slotButton(mobileDay, slot, true)}</div>)}</div>
+    </div>
+    <div className="calendar-scroll desktop-time-picker"><table className="preference-calendar"><caption className="sr-only">Availability for each day, in {data.timeZone}</caption><thead><tr><th scope="col">Time</th>{days.map(day => <th key={day.date} scope="col">{day.label}</th>)}</tr></thead><tbody>{[8, 10, 12, 14, 16, 18, 20].map((hour, row) => <tr key={hour}><th scope="row">{clock(hour)}–{clock(hour + 2)}</th>{days.map(day => <td key={day.date}>{slotButton(day, day.slots[row])}</td>)}</tr>)}</tbody></table></div>
     <div className="calendar-controls"><span>Selected times limit when HUDDLE can suggest plans.</span><button className="connect-button" onClick={() => onChange([])}>Clear choices</button><button className="connect-button" disabled={loading} onClick={refresh}>Refresh busy times</button></div>
   </section>
 }
