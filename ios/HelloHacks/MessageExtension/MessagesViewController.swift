@@ -157,6 +157,18 @@ private struct HuddleExtensionView: View {
             code = initialCode
             await loadSession()
         }
+        .task(id: session?.sessionId) {
+            guard let sessionID = session?.sessionId else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 4_000_000_000)
+                    let updated = try await onLoadSession(sessionID)
+                    guard !Task.isCancelled else { return }
+                    session = updated
+                } catch is CancellationError { return }
+                catch { errorMessage = error.localizedDescription }
+            }
+        }
     }
 
     private var header: some View {
@@ -237,10 +249,13 @@ private struct HuddleExtensionView: View {
             }
 
             if session.plans.isEmpty {
-                Text("When your group has submitted preferences on the website, tap below to make ideas.")
+                Text(session.generationStatus == "generating" ? "Checking shared availability and generating activities…" : "Ideas generate once everyone who joined saves preferences and availability on the website.")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.62))
-                actionButton("Generate ideas", icon: "sparkles") {
+                if let warning = session.warning, !warning.isEmpty {
+                    Text(warning).font(.system(size: 10)).foregroundStyle(.orange.opacity(0.9))
+                }
+                actionButton("Generate ideas", icon: "sparkles", disabled: session.generationStatus == "generating") {
                     await generateIdeas()
                 }
             } else {
@@ -264,7 +279,7 @@ private struct HuddleExtensionView: View {
                 Button {
                     Task { await generateIdeas() }
                 } label: {
-                    Text(busy ? "Refreshing…" : "Refresh ideas")
+                    Text(busy ? "Refreshing…" : "Refresh group")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.6))
                         .frame(maxWidth: .infinity)
@@ -368,6 +383,7 @@ private struct HuddleSession: Decodable {
     let plans: [HuddlePlan]
     let planMode: String?
     let warning: String?
+    let generationStatus: String?
 }
 
 private struct HuddleInvite: Decodable {

@@ -34,34 +34,61 @@ function App() {
     let cancelled = false
     async function restore() {
       try {
+        const query = new URLSearchParams(window.location.search)
+        if (query.get('auth') === 'cancelled') setNotice('Google connection was cancelled. You can try again or choose times manually.')
         const { user: signedInUser } = await api('/api/me')
         if (cancelled || !signedInUser) return
         setUser(signedInUser)
         const querySession = new URLSearchParams(window.location.search).get('session')
-        const pendingSession = querySession || localStorage.getItem('huddle_pending_session')
+        const pendingSession = querySession || localStorage.getItem('huddle_pending_session') || localStorage.getItem('huddle_active_session')
         if (pendingSession) {
           setSessionId(pendingSession)
           const joined = await api('/api/sessions/' + encodeURIComponent(pendingSession) + '/join', { method: 'POST', body: '{}' })
           if (cancelled) return
           setSession(joined.session)
+          setInviteUrl(joined.session.inviteUrl)
+          localStorage.setItem('huddle_active_session', pendingSession)
+          const preferences = joined.session.participants.find((person) => person.isYou)?.preferences
+          if (preferences) {
+            setBudget(preferences.budget); setSelectedActivities(preferences.interests)
+            setManualAvailability(preferences.manualAvailability); setNeeds(preferences.needs); setLocation(preferences.location)
+          }
           const url = new URL(window.location.href)
           url.searchParams.delete('session')
           history.replaceState({}, '', url.pathname + url.search)
           localStorage.removeItem('huddle_pending_session')
-          setStep('preferences')
+          setStep(preferences ? 'submitted' : 'preferences')
         } else setStep('home')
-      } catch (err) { if (!cancelled) setError(err.message) }
+      } catch (err) {
+        localStorage.removeItem('huddle_active_session'); localStorage.removeItem('huddle_pending_session')
+        if (!cancelled) setError(err.message)
+      }
     }
     restore()
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (!sessionId || !user) return
+    let cancelled = false
+    let timer
+    async function poll() {
+      try {
+        const result = await api('/api/sessions/' + encodeURIComponent(sessionId))
+        if (!cancelled) { setSession(result.session); setInviteUrl(result.session.inviteUrl) }
+      } catch (err) { if (!cancelled) setError(err.message) }
+      if (!cancelled) timer = setTimeout(poll, 4000)
+    }
+    timer = setTimeout(poll, 4000)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [sessionId, user])
 
   const responseCount = session?.participants.filter((person) => person.preferences).length || 0
   function signIn() {
     const querySession = new URLSearchParams(window.location.search).get('session')
     const sessionToRestore = querySession || sessionId
     if (sessionToRestore) localStorage.setItem('huddle_pending_session', sessionToRestore)
-    window.location.assign('/auth/google')
+    window.location.assign('/auth/google' + (sessionToRestore ? '?session=' + encodeURIComponent(sessionToRestore) : ''))
   }
   async function beginDemo() {
     setError(''); setLoading(true)
@@ -69,9 +96,9 @@ function App() {
       const invitedSession = new URLSearchParams(window.location.search).get('session')
       const result = await api('/api/demo/session', { method: 'POST', body: JSON.stringify(invitedSession ? { sessionId: invitedSession } : {}) })
       setUser(result.user); setSessionId(result.sessionId)
-      setInviteUrl(window.location.origin + '/?session=' + encodeURIComponent(result.sessionId))
+      localStorage.setItem('huddle_active_session', result.sessionId)
       const loaded = await api('/api/sessions/' + result.sessionId + '/join', { method: 'POST', body: '{}' })
-      setSession(loaded.session); setStep('preferences')
+      setSession(loaded.session); setInviteUrl(loaded.session.inviteUrl); setStep('preferences')
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -80,6 +107,7 @@ function App() {
     try {
       const result = await api('/api/sessions', { method: 'POST', body: '{}' })
       setSessionId(result.sessionId); setInviteUrl(result.inviteUrl)
+      localStorage.setItem('huddle_active_session', result.sessionId)
       const loaded = await api('/api/sessions/' + result.sessionId + '/join', { method: 'POST', body: '{}' })
       setSession(loaded.session); setStep('preferences')
     } catch (err) { setError(err.message) }
@@ -95,7 +123,15 @@ function App() {
     setError(''); setLoading(true)
     try {
       const result = await api('/api/sessions/' + sessionId + '/preferences', { method: 'PUT', body: JSON.stringify({ interests: selectedActivities, budget, needs, location, manualAvailability }) })
-      setSession(result.session); setNotice('Your preferences are saved. Open HUDDLE in Messages to generate ideas.'); setStep('submitted')
+      setSession(result.session); setNotice('Your preferences are saved. Ideas generate when everyone who joined is ready.'); setStep('submitted')
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+  async function generateIdeas() {
+    setError(''); setNotice(''); setLoading(true)
+    try {
+      const result = await api('/api/sessions/' + encodeURIComponent(sessionId) + '/plans', { method: 'POST', body: '{}' })
+      setSession(result.session)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -105,6 +141,7 @@ function App() {
   }
   async function signOut() {
     await api('/api/logout', { method: 'POST', body: '{}' })
+    localStorage.removeItem('huddle_active_session'); localStorage.removeItem('huddle_pending_session')
     setUser(null); setSession(null); setSessionId(''); setStep('welcome')
   }
   const onInvitePage = new URLSearchParams(window.location.search).has('session')
@@ -138,7 +175,7 @@ function App() {
             <button className="primary-button" onClick={createSession} disabled={loading}>{loading ? 'Starting…' : 'Create a group plan'} <span>→</span></button>
             <div className="calendar-connect connected">
               <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>Google Calendar</strong><span>{user?.calendarConnected ? 'Connected · free/busy access' : 'Not connected · add times manually'}</span></div>
-              {!user?.calendarConnected && <button className="connect-button" onClick={signIn}>Connect</button>}
+              <button className="connect-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect' : 'Connect'}</button>
             </div>
             <button className="demo-link" onClick={signOut}>Sign out</button>
           </div>
@@ -149,6 +186,7 @@ function App() {
             <p className="eyebrow">YOUR GROUP · {responseCount} RESPONDED</p>
             <h1>Add your<br /><em>preferences.</em></h1>
             <p className="subhead">Everyone submits their own choices. HUDDLE compares them for the group.</p>
+            <p className="fine-print">Saved preferences and shared available times are sent to OpenAI to suggest activities. Calendar event details are never read.</p>
             <div className="section-label">WHAT SOUNDS FUN?</div>
             <div className="activity-grid">{activities.map((activity) => <button key={activity} className={'activity-chip ' + (selectedActivities.includes(activity) ? 'active' : '')} onClick={() => toggleActivity(activity)}><span>{activityEmoji(activity)}</span>{activity}</button>)}</div>
             <div className="budget-heading"><div><div className="section-label">YOUR BUDGET PER PERSON</div><span className="muted">HUDDLE will look for affordable matches</span></div><strong>{'$' + budget}</strong></div>
@@ -161,9 +199,9 @@ function App() {
             <div className="time-grid">{timeOptions.map(([value, label]) => <button key={value} className={'time-chip ' + (manualAvailability.includes(value) ? 'active' : '')} onClick={() => toggleTime(value)}>{label}</button>)}</div>
             <div className={'calendar-connect ' + (user?.calendarConnected ? 'connected' : '')}>
               <div className="calendar-icon">▦</div><div className="calendar-copy"><strong>{user?.calendarConnected ? 'Google Calendar connected' : 'Check calendar availability'}</strong><span>{user?.calendarConnected ? 'HUDDLE checks free/busy only' : 'Connect securely or use your selected times'}</span></div>
-              {!user?.calendarConnected && <button className="connect-button" onClick={signIn}>Connect</button>}
+              <button className="connect-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect' : 'Connect'}</button>
             </div>
-            {inviteUrl && <button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link</button>}
+            {inviteUrl && <><label className="form-label">Invite friends<input className="text-input" value={inviteUrl} readOnly onFocus={(event) => event.target.select()} /></label><button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link</button></>}
             <button className="primary-button" onClick={savePreferences} disabled={loading}>{loading ? 'Saving…' : 'Save my preferences'} <span>→</span></button>
           </div>
         )}
@@ -172,11 +210,17 @@ function App() {
             <div className="shared-check">✓</div>
             <p className="eyebrow">HUDDLE · {sessionId}</p>
             <h1>You’re in,<br /><em>{user?.name?.split(' ')[0] || 'friend'}.</em></h1>
-            <p className="subhead">Your preferences are saved. The group’s plans are generated and shared from the HUDDLE iMessage extension.</p>
+            <p className="subhead">Invite your friends to this group. Once everyone who joins saves preferences and availability, HUDDLE generates activities you can share here or in Messages.</p>
             <div className="responses-panel">
-              <strong>Next · Open Messages</strong>
-              <p>Return to your group chat, tap +, choose HUDDLE, then tap “Generate ideas.” Pick a plan and share it right back into the conversation.</p>
+              <strong>{responseCount} of {session?.participants.length || 0} people have saved preferences</strong>
+              {session?.participants.map((person, index) => <p key={index}>{person.name}{person.isYou ? ' (you)' : ''} · {person.preferences ? 'Preferences saved' : 'Waiting for preferences'} · {person.calendarConnected ? 'Calendar connected' : person.preferences?.manualAvailability.length ? 'Times selected' : 'Needs availability'}</p>)}
             </div>
+            {session?.generationStatus === 'generating' && <p className="mode-note" role="status">Checking shared availability and generating activities…</p>}
+            {!session?.ready && <p className="mode-note">Waiting for everyone to save preferences and connect Calendar or choose available times.</p>}
+            {session?.generationError && <p className="tradeoff-note" role="alert">{session.generationError}</p>}
+            {!!session?.plans.length && <><p className="mode-note">AI suggestions · Estimated costs in CAD · Times in {session.plans[0].timeZone}</p><div className="idea-list">{session.plans.map((plan) => <article className="idea-card" key={plan.id}><span className="idea-emoji">{plan.emoji}</span><div className="idea-details"><strong>{plan.title}</strong><span>{plan.time} · about ${plan.price}/person</span><span>{plan.detail}</span><small>{plan.rationale}</small><button className="secondary-button" onClick={() => copyText(plan.title + ' · ' + plan.time + ' (' + plan.timeZone + ') · about $' + plan.price + '/person · ' + plan.location, 'Plan copied. Share it in your group chat.')}>Copy plan</button></div></article>)}</div></>}
+            {!session?.plans.length && session?.ready && <button className="primary-button" disabled={loading || session?.generationStatus === 'generating'} onClick={generateIdeas}>{loading || session?.generationStatus === 'generating' ? 'Generating…' : 'Generate ideas'}</button>}
+            <button className="secondary-button" onClick={signIn}>{user?.calendarConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}</button>
             {inviteUrl && <button className="secondary-button" onClick={() => copyText(inviteUrl, 'Invite link copied. Share it in your group chat.')}>Copy group invite link <span>↗</span></button>}
             <button className="primary-button" onClick={() => setStep('preferences')}>Edit my preferences</button>
           </div>
