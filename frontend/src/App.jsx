@@ -26,6 +26,11 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [demoEnabled, setDemoEnabled] = useState(false)
+
+  useEffect(() => {
+    api('/api/config').then(config => setDemoEnabled(config.demoEnabled)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -182,7 +187,7 @@ function App() {
             <p className="subhead">Share your interests, budget, needs, and availability. HUDDLE finds ideas your group can enjoy together.</p>
             <button className="google-button" onClick={signIn}><span className="google-g">G</span> Continue with Google</button>
             <p className="fine-print">Group members can see your unavailable time blocks. Event details stay private.</p>
-            <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>
+            {demoEnabled && <button className="demo-link" onClick={beginDemo} disabled={loading}>{loading ? 'Opening demo…' : 'Try a group demo'}</button>}
             <div className="trust-row"><span>✧</span> You choose what to share <b>·</b> No chat-history reading</div>
           </div>
         )}

@@ -4,8 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key><string>HUDDLE</string>
-	<key>HUDDLE_API_BASE_URL</key><string>http://localhost:3001</string>
-	<key>HUDDLE_WEB_BASE_URL</key><string>http://localhost:5173</string>
+	<key>HUDDLE_API_BASE_URL</key><string>https://huddled-web-production.up.railway.app</string>
+	<key>HUDDLE_WEB_BASE_URL</key><string>https://huddled-web-production.up.railway.app</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key><true/>

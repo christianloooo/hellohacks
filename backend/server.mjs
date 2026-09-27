@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generateActivities } from './planner.mjs'
 
@@ -15,13 +15,16 @@ try {
 } catch {}
 const { planningWindow, candidateSlots, selectedSlot, overlaps, mergeBusy } = await import('./availability.mjs')
 const PORT = Number(process.env.PORT || 3001)
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
-const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || FRONTEND_ORIGIN
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:' + PORT + '/auth/google/callback'
+const hostedOrigin = process.env.PUBLIC_APP_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : '')
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || hostedOrigin || 'http://localhost:5173'
+const PUBLIC_APP_URL = hostedOrigin || FRONTEND_ORIGIN
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || (hostedOrigin || 'http://localhost:' + PORT) + '/auth/google/callback'
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Vancouver'
 const DEMO_MODE = process.env.DEMO_MODE !== 'false'
-const DATA_FILE = join(here, 'data', 'sessions.json')
-const AUTH_FILE = join(here, 'data', 'auth-state.json')
+const DATA_DIRECTORY = process.env.DATA_DIR || join(here, 'data')
+const DATA_FILE = join(DATA_DIRECTORY, 'sessions.json')
+const AUTH_FILE = join(DATA_DIRECTORY, 'auth-state.json')
+const STATIC_DIRECTORY = resolve(process.env.STATIC_DIR || join(here, '../frontend/dist'))
 const COOKIE = 'huddle_session'
 const STATE_COOKIE = 'huddle_oauth_state'
 const GOOGLE_SCOPE = 'openid email profile https://www.googleapis.com/auth/calendar.events.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly'
@@ -429,6 +432,37 @@ async function googleCallback(req, res, url) {
   res.writeHead(302, { Location: returnUrl.href }); res.end()
 }
 
+// Only compiled public assets are served. Source, secrets, and durable data stay
+// outside this directory. API/auth misses must never become an HTML response.
+async function serveFrontend(req, res, url) {
+  if (!['GET', 'HEAD'].includes(req.method) || /^\/(api|auth)(\/|$)/.test(url.pathname)) return false
+  let pathname
+  try { pathname = decodeURIComponent(url.pathname) } catch { return false }
+  if (pathname.includes('\\') || pathname.split('/').some(part => part.startsWith('.'))) return false
+  const path = resolve(STATIC_DIRECTORY, '.' + pathname)
+  if (path !== STATIC_DIRECTORY && !path.startsWith(STATIC_DIRECTORY + sep)) return false
+  let contents
+  let filename = pathname === '/' ? join(STATIC_DIRECTORY, 'index.html') : path
+  try { contents = await readFile(filename) } catch (error) {
+    if (!['ENOENT', 'EISDIR', 'ENOTDIR'].includes(error.code)) throw error
+    if (extname(pathname) || pathname.startsWith('/assets/')) return false
+    filename = join(STATIC_DIRECTORY, 'index.html')
+    try { contents = await readFile(filename) } catch (fallbackError) {
+      if (fallbackError.code === 'ENOENT') return false
+      throw fallbackError
+    }
+  }
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.webp': 'image/webp', '.jpg': 'image/jpeg' }
+  res.writeHead(200, {
+    'Content-Type': types[extname(filename)] || 'application/octet-stream',
+    'Content-Length': contents.length,
+    'Cache-Control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+  })
+  res.end(req.method === 'HEAD' ? undefined : contents)
+  return true
+}
+
 await loadSessions()
 await loadAuthState()
 const server = createServer(async (req, res) => {
@@ -443,6 +477,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { calendarCount: credentialsByUser.get(user.id)?.calendarCount || 1, timeZone: TIME_ZONE, busy })
     }
     if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, name: 'HUDDLE API' })
+    if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { demoEnabled: DEMO_MODE && process.env.NODE_ENV !== 'production' })
     if (req.method === 'GET' && url.pathname === '/api/me') {
       const user = userFor(req)
       return json(res, 200, { user: user ? { name: user.name, email: user.email, provider: user.provider, calendarConnected: credentialsByUser.has(user.id) } : null })
@@ -542,6 +577,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { session: publicSession(session, user) })
       }
     }
+    if (await serveFrontend(req, res, url)) return
     return json(res, 404, { error: 'Route not found.' })
   } catch (error) {
     const status = error.status || 500
