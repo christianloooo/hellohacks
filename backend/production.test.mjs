@@ -17,7 +17,7 @@ test('production serves the website, protects private files, and keeps public in
   await writeFile(join(directory, '.env'), 'PRIVATE_TEST_VALUE')
   await mkdir(dataDir)
   await writeFile(join(dataDir, 'sessions.json'), JSON.stringify([{ id: 'old-session', participants: [], plans: [
-    { id: 0, title: 'Picnic', detail: 'Bring snacks.', location: 'Campus', price: 10, emoji: '🌿',
+    { id: 0, title: 'Picnic 🌳🍎', detail: 'Bring snacks. 🥪', location: 'Campus', price: 10, emoji: '🌿',
       start: '2026-11-01T18:00:00Z', end: '2026-11-01T20:00:00Z', timeZone: 'America/Vancouver', time: 'Sunday, 10 AM' },
   ] }]))
   let child
@@ -64,6 +64,9 @@ test('production serves the website, protects private files, and keeps public in
   assert.equal(canonical.origin, 'https://huddled.example.test')
   const invite = await (await request('/api/sessions/invite', { method: 'POST' })).json()
   const migrated = await (await request('/api/extension/sessions/old-session')).json()
+  assert.equal(migrated.plans[0].title, 'Picnic')
+  assert.equal(migrated.plans[0].detail, 'Bring snacks.')
+  assert.equal(migrated.plans[0].emoji, '')
   const calendarPath = new URL(migrated.plans[0].calendarDownloadUrl).pathname
   const calendarBeforeRestart = await (await request(calendarPath)).text()
   assert.match(calendarBeforeRestart, /SUMMARY:Picnic/)

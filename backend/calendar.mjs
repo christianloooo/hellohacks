@@ -1,3 +1,4 @@
+import { cleanPlanText } from './plan-text.mjs'
 // RFC 5545: use UTC instants, escape TEXT, and fold by UTF-8 bytes.
 function stamp(value) {
   return new Date(value).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
@@ -19,6 +20,7 @@ function description(plan, shareUrl) {
   return `${plan.detail}\nEstimated cost: CAD $${plan.price} per person.\nPlanned with HUDDLE.\n${shareUrl}`
 }
 export function calendarLinks(plan, origin) {
+  plan = cleanPlanText(plan)
   const base = origin.replace(/\/$/, '')
   const shareUrl = `${base}/?plan=${encodeURIComponent(plan.shareId)}`
   const params = new URLSearchParams({ action: 'TEMPLATE', text: plan.title,
@@ -27,6 +29,7 @@ export function calendarLinks(plan, origin) {
     googleCalendarUrl: `https://calendar.google.com/calendar/render?${params}` }
 }
 export function calendarFile(plan, origin) {
+  plan = cleanPlanText(plan)
   const { shareUrl } = calendarLinks(plan, origin)
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//HUDDLE//Group Plans//EN', 'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT', `UID:${plan.shareId}@huddle`, `DTSTAMP:${stamp(plan.sharedAt)}`,

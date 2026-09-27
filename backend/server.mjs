@@ -5,6 +5,7 @@ import { dirname, join, resolve, sep, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generateActivities } from './planner.mjs'
 import { calendarLinks, calendarFile } from './calendar.mjs'
+import { cleanPlanText } from './plan-text.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 try {
@@ -127,6 +128,8 @@ async function loadSessions() {
   try {
     const saved = JSON.parse(await readFile(DATA_FILE, 'utf8'))
     for (const entry of saved) if (entry?.id) {
+      entry.plans = (entry.plans || []).map(cleanPlanText)
+      entry.sharedPlans = (entry.sharedPlans || []).map(cleanPlanText)
       entry.participants = entry.participants.filter((person) => !person.userId.startsWith('invite-'))
       if (entry.generationStatus === 'generating') {
         entry.generationStatus = 'error'
